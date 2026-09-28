@@ -1,4 +1,14 @@
 # Desktop Commander MCP
+
+> **romanilyin fork — local Windows MCP for ChatGPT.**
+> [Подробная установка на другом ПК и работа в нескольких чатах](docs/local-mcp-windows.ru.md)
+> · [Deployment scripts](local/README.md)
+>
+> This fork adds private OpenAI tunnel deployment, encrypted per-computer keys,
+> Windows sign-in startup, telemetry opt-out, and bounded MCP responses. Use a
+> **different tunnel and ChatGPT plugin for each computer**. The upstream server
+> and license are retained; the npm package below still belongs to upstream.
+
 ### Search, update, manage files and run terminal commands with AI
 
 [![npm downloads](https://img.shields.io/npm/dw/@wonderwhy-er/desktop-commander)](https://www.npmjs.com/package/@wonderwhy-er/desktop-commander)

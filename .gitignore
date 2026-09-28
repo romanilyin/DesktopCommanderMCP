@@ -58,3 +58,7 @@ test_files/
 test_fix.js
 test_search.js
 .ripgrep-downloads/
+
+# Per-computer OpenAI tunnel runtime, credentials, configuration and tests
+/.local/
+*.dpapi
