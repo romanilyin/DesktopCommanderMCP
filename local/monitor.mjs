@@ -13,6 +13,7 @@ const maxBodyBytes = 1024 * 1024;
 const maxLogChunkBytes = 256 * 1024;
 const maxLogLineBytes = 8192;
 const maxJournalBytes = 2 * 1024 * 1024;
+const maxRecordBytes = 256 * 1024;
 const journalGenerations = 4;
 
 function absolute(value, label) {
@@ -214,7 +215,7 @@ async function rotateJournal(outputDir, name) {
 
 async function appendJournal(outputDir, name, record) {
   const json = JSON.stringify(record) + '\n';
-  if (Buffer.byteLength(json) > 256 * 1024) throw new Error('Monitor record exceeds cap');
+  if (Buffer.byteLength(json) > maxRecordBytes) throw new Error('Monitor record exceeds cap');
   await rotateJournal(outputDir, name);
   await fs.appendFile(childFile(outputDir, name), json, { encoding: 'utf8', mode: 0o600 });
 }
@@ -285,9 +286,14 @@ function sanitizeIncident(value, context, observedAt) {
     tunnelLog: sample.tunnelLog,
     metrics: { status: sample.metrics.status, gauges: sample.metrics.gauges,
       counters: { commands: sample.metrics.counters.commands
-        .filter(item => item.tunnelServiceStatus === '409' || Number(item.tunnelServiceStatus) >= 500).slice(0, 20) } },
+        .filter(item => item.tunnelServiceStatus === '409' || Number(item.tunnelServiceStatus) >= 500) } },
   }));
-  return { observedAt, code: value.code, severity, evidence, context: compactContext };
+  const record = { observedAt, code: value.code, severity, evidence, context: compactContext };
+  while (record.context.length > 1 && Buffer.byteLength(JSON.stringify(record) + '\n') > maxRecordBytes) {
+    record.context.shift();
+    record.contextTruncated = true;
+  }
+  return record;
 }
 
 export async function createMonitor(config) {

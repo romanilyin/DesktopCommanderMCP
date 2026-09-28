@@ -69,7 +69,7 @@ async function startServer(state) {
       res.end(JSON.stringify(healthSnapshot()));
     } else if (req.url === '/metrics') {
       res.setHeader('content-type', 'text/plain');
-      res.end(metricText(state.count));
+      res.end(state.metricsOverride?.() ?? metricText(state.count));
     } else if (req.url === '/healthz' || req.url === '/readyz') res.end('ok');
     else res.writeHead(404).end();
   });
@@ -199,4 +199,51 @@ test('tunnel parser ignores arbitrary text and oversized/unrecognized records', 
     'notification_ack');
   assert.equal(classifyTunnelLine(JSON.stringify({ level: 'error', component: 'transport', msg: 'generic 409 failure' }), at)?.event,
     'transport_error');
+});
+
+test('incident retains newest context and stays bounded at maximum metric cardinality', async () => {
+  const files = await fixture();
+  const state = { count: 0, redirectReady: false };
+  const { server, origin } = await startServer(state);
+  let monitor;
+  try {
+    await fs.writeFile(files.config.healthUrlFile, origin);
+    const groups = [{ method: 'tools/call', status: 409 }];
+    for (let status = 500; status <= 599; status++) groups.push({ method: 'tools/call', status });
+    for (let status = 500; groups.length < 128; status++) groups.push({ method: 'resources/read', status });
+    state.metricsOverride = () => {
+      const lines = [
+        'commands_queue_length 0', 'commands_queue_capacity 8',
+        `commands_poll_last_successful_timestamp_seconds ${Math.floor(Date.now() / 1000)}`,
+        'process_start_time_seconds 100',
+      ];
+      for (const { method, status } of groups) {
+        const labels = `{request_method="${method}",tunnel_service_status="${status}"}`;
+        const count = 987654321098765 + (status === 409 ? state.count : 0);
+        lines.push(`command_end_to_end_latency_milliseconds_count${labels} ${count}`);
+        lines.push(`command_end_to_end_latency_milliseconds_sum${labels} ${count * 15}`);
+      }
+      return lines.join('\n') + '\n';
+    };
+    monitor = await createMonitor(await loadMonitorConfig(files.configFile));
+    for (let i = 0; i < 19; i++) await monitor.poll();
+    state.count = 1;
+    const latest = await monitor.poll();
+    assert.equal(latest.metrics.counters.commands.length, 128);
+    const incidentLines = (await fs.readFile(path.join(files.config.outputDir, 'incidents.jsonl'), 'utf8'))
+      .trim().split('\n');
+    const incidentLine = incidentLines.find(line => JSON.parse(line).code === 'conflict_http_409');
+    assert.ok(incidentLine, 'Monitor remains alive to record new 409 with a full context window');
+    assert.ok(Buffer.byteLength(incidentLine + '\n') <= 256 * 1024);
+    const incident = JSON.parse(incidentLine);
+    assert.equal(incident.contextTruncated, true);
+    assert.equal(incident.context.at(-1).observedAt, latest.observedAt);
+    assert.ok(incident.context.length < 20 && incident.context.length >= 1);
+    const status = JSON.parse(await fs.readFile(path.join(files.config.outputDir, 'status.json'), 'utf8'));
+    assert.equal(status.recentSamples.length, 20);
+  } finally {
+    await monitor?.release();
+    await closeServer(server);
+    await files.cleanup();
+  }
 });
