@@ -28,6 +28,8 @@ Use a separate tunnel and ChatGPT plugin for each computer. This deployment does
 | `response-guard.mjs` | Bound SDK stdio responses to leave room under the tunnel response size limit. |
 | `key-entry.mjs` | Single-use loopback form with Host, Origin and CSRF checks and a 15-minute lifetime. |
 | `smoke-test.mjs` | Exercise the local MCP protocol and basic tools without connecting a tunnel. |
+| `search-smoke.mjs` | Parse the server's search-session response and poll with an explicit deadline. |
+| `compatibility-test.mjs` | Verify PDF, image, Excel and Markdown integrations against the built server. |
 
 Machine configuration, runtimes, encrypted keys, profiles, logs and reports live in ignored **`<repository>/.local/`**. Never publish that directory. Copy source code between computers and create fresh credentials on each computer. DPAPI storage is not a sandbox against processes running as the same Windows user.
 
@@ -41,8 +43,13 @@ After installation, from the repository root in PowerShell 7:
 $cfg = Get-Content ./.local/config.json -Raw | ConvertFrom-Json
 & $cfg.nodePath --test local/test/*.test.mjs
 & $cfg.nodePath local/smoke-test.mjs
+& $cfg.nodePath local/compatibility-test.mjs
 ```
 
 Unit tests use synthetic data and keys. The smoke test creates a unique temporary directory under `.local/tmp`, invokes local file and PowerShell tools, checks oversized output recovery, and removes only its own fixture. It does not load a runtime key, connect to OpenAI, change the global Desktop Commander configuration, or touch another running MCP process. The report is written to `.local/state/smoke-test-report.json`. A separate ChatGPT test is still required to verify the actual tunnel, account permissions and selected computer.
+
+Search verification parses the exact `Started content/file search session: ...` header and always calls `get_more_search_results`, even when the initial response already contains the match. Unit tests inject delayed responses to cover polling deterministically. The compatibility test uses disposable documents and a private temporary Chrome profile; install Chrome or Chromium to test PDF creation. Its report is `.local/state/compatibility-report.json`.
+
+Node.js **22.12.0 or newer** is required; the Windows installer pins 24.21.0 and rejects older overrides before installing dependencies. The `Local Windows MCP` workflow checks Node 22.12.0 and 24.21.0, builds the server, runs these tests, and audits production and development dependencies. See [dependency maintenance](../docs/dependency-maintenance.md) for the scoped overrides and their regression checks.
 
 Custom tools can be added in upstream `src/tools/`, their schemas in `src/tools/schemas.ts`, and registration in `src/server.ts`. Rebuild and restart at a safe point, then refresh the plugin's tools in ChatGPT. Avoid unbounded inline results; prefer pagination or saved artifacts.

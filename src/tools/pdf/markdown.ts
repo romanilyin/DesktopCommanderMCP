@@ -301,7 +301,7 @@ export async function parseMarkdownToPdf(markdown: string, options: any = {}): P
         
         const pdf = await mdToPdf({ content: markdown }, options);
 
-        return pdf.content;
+        return Buffer.from(pdf.content);
     } catch (error) {
         // Provide helpful error message if Chrome is not found
         const errorMessage = error instanceof Error ? error.message : String(error);

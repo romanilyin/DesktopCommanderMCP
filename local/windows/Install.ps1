@@ -74,6 +74,7 @@ if (Test-Path -LiteralPath $configPath -PathType Leaf) {
             }
         }
     }
+    Assert-NodeVersion $NodePath
     $npmCli = Join-Path (Split-Path -Parent $NodePath) 'node_modules/npm/bin/npm-cli.js'
     if (-not (Test-Path -LiteralPath $npmCli -PathType Leaf)) { throw "Node.js installation lacks npm: $npmCli" }
 

@@ -14,6 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const { createBundlePackageJson } = require('./mcpb-package-json.cjs');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const BUNDLE_DIR = path.join(PROJECT_ROOT, 'mcpb-bundle');
@@ -108,17 +109,7 @@ filesToCopy.forEach(file => {
 
 // Step 6: Create package.json in bundle with production dependencies from main package.json
 // This ensures MCPB bundle always has the same dependencies as the npm package
-const bundlePackageJson = {
-    name: manifest.name,
-    version: manifest.version,
-    description: manifest.description,
-    type: "module", // Required for ESM - without this, Node.js defaults to CommonJS and shows warnings
-    main: "dist/index.js",
-    author: manifest.author,
-    license: manifest.license,
-    repository: manifest.repository,
-    dependencies: packageJson.dependencies // Use dependencies directly from package.json
-};
+const bundlePackageJson = createBundlePackageJson(manifest, packageJson);
 
 fs.writeFileSync(
     path.join(BUNDLE_DIR, 'package.json'), 

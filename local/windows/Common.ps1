@@ -37,6 +37,19 @@ function Assert-ExitCode([string]$Operation) {
     if ($LASTEXITCODE -ne 0) { throw "$Operation failed (exit code $LASTEXITCODE)." }
 }
 
+function Assert-NodeVersion([string]$NodePath) {
+    Assert-ExecutablePath $NodePath 'Node.js'
+    $reportedVersion = & $NodePath --version
+    Assert-ExitCode 'Node.js version check'
+    if ([string]$reportedVersion -notmatch '^v(\d+)\.(\d+)\.(\d+)$') {
+        throw "Unrecognized Node.js version: $reportedVersion"
+    }
+    $version = [version]($Matches[1] + '.' + $Matches[2] + '.' + $Matches[3])
+    if ($version -lt [version]'22.12.0') {
+        throw "Node.js 22.12.0 or newer is required; found $reportedVersion. Use the installer's pinned runtime or provide a supported -NodePath."
+    }
+}
+
 function Assert-ChildPath([string]$Target, [string]$Parent) {
     $resolvedParent = (Resolve-Path -LiteralPath $Parent).Path.TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
     if (Test-Path -LiteralPath $Target) {

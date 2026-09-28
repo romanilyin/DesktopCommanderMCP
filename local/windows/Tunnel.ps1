@@ -32,7 +32,7 @@ try {
             & $config.tunnelClientPath doctor --profile $config.alias --profile-dir $profileDir --explain
             Assert-ExitCode 'tunnel doctor'
         } else {
-            Assert-ExecutablePath $config.nodePath 'Node.js'
+            Assert-NodeVersion $config.nodePath
             $launcher = Join-Path $localRoot 'start-local.mjs'
             if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { throw "Missing launcher: $launcher" }
             if ($launcher -match '["\r\n]') { throw 'Launcher path contains unsupported characters.' }

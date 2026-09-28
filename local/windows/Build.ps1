@@ -1,7 +1,7 @@
 . (Join-Path $PSScriptRoot 'Common.ps1')
 Assert-WindowsPowerShell7
 $config = Get-LocalConfig
-Assert-ExecutablePath $config.nodePath 'Node.js'
+Assert-NodeVersion $config.nodePath
 $nodeDir = Split-Path -Parent $config.nodePath
 $npmCli = Join-Path $nodeDir 'node_modules/npm/bin/npm-cli.js'
 if (-not (Test-Path -LiteralPath $npmCli -PathType Leaf)) { throw "npm CLI missing: $npmCli" }

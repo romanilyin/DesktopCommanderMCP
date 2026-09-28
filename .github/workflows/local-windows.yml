@@ -1,0 +1,80 @@
+name: Local Windows MCP
+
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.12.0', '24.21.0']
+    env:
+      DESKTOP_COMMANDER_DISABLE_TELEMETRY: '1'
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: Install and build
+        shell: pwsh
+        run: |
+          npm ci --include=dev --ignore-scripts
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm rebuild @vscode/ripgrep esbuild sharp
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Validate PowerShell and create a test-only local config
+        shell: pwsh
+        run: |
+          Get-ChildItem local/windows/*.ps1 | ForEach-Object {
+            $tokens = $null
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
+            if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          }
+          . ./local/windows/Common.ps1
+          $nodePath = (Get-Command node).Source
+          Assert-NodeVersion $nodePath
+          New-Item -ItemType Directory -Force .local/state | Out-Null
+          @{
+            schemaVersion = 1
+            name = 'CI verification only'
+            alias = 'ci-verification'
+            tunnelId = 'tunnel_00000000000000000000000000000000'
+            nodePath = $nodePath
+            tunnelClientPath = $nodePath
+            powerShellPath = (Get-Command pwsh).Source
+          } | ConvertTo-Json | Set-Content .local/config.json -Encoding utf8
+      - name: Unit regression tests
+        run: npm run test:local
+      - name: Local MCP protocol smoke test
+        run: node local/smoke-test.mjs
+      - name: PDF, Excel and Markdown compatibility
+        run: npm run test:local-compat
+      - name: Audit production and build dependencies
+        shell: pwsh
+        run: |
+          npm audit --omit=dev --json > .local/state/audit-production.json
+          $productionExit = $LASTEXITCODE
+          npm audit --json > .local/state/audit-all.json
+          $fullExit = $LASTEXITCODE
+          if ($productionExit -or $fullExit) { throw 'Dependency audit failed; inspect audit reports.' }
+      - name: Upload verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-windows-node-${{ matrix.node }}
+          path: .local/state/*.json
+          if-no-files-found: ignore

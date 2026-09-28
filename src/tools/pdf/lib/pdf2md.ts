@@ -43,17 +43,22 @@ export interface PdfParseResult {
  * @param pdfDocument The PDF document to extract metadata from.
  * @returns A PdfMetadata object containing the extracted metadata.
  */
-const extractMetadata = ({ pdfDocument, metadata }: ParseResult): PdfMetadata => ({
-    totalPages: pdfDocument.numPages,
-    title: metadata.Title,
-    author: metadata.Author,
-    creator: metadata.Creator,
-    producer: metadata.Producer,
-    version: metadata.PDFFormatVersion,
-    creationDate: metadata.CreationDate,
-    modificationDate: metadata.ModDate,
-    isEncrypted: metadata.IsEncrypted,
-});
+const extractMetadata = ({ pdfDocument, metadata }: ParseResult): PdfMetadata => {
+    // unpdf 1.x exposes PDF.js metadata as { info, metadata }; older releases
+    // returned the document information fields directly.
+    const info = metadata?.info ?? metadata ?? {};
+    return {
+        totalPages: pdfDocument.numPages,
+        title: info.Title,
+        author: info.Author,
+        creator: info.Creator,
+        producer: info.Producer,
+        version: info.PDFFormatVersion,
+        creationDate: info.CreationDate,
+        modificationDate: info.ModDate,
+        isEncrypted: info.IsEncrypted,
+    };
+};
 
 
 export type PageRange = {
