@@ -5,6 +5,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { extractSearchSessionId, pollSearchForMarker, textOf } from './search-smoke.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const config=JSON.parse(await fs.readFile(path.join(root,'.local','config.json'),'utf8'));
@@ -18,9 +19,8 @@ const transport=new StdioClientTransport({command:config.nodePath,args:[path.joi
 let stderr='';
 transport.stderr?.on('data',chunk=>{stderr=(stderr+chunk.toString()).slice(-32000);});
 const report={date:new Date().toISOString(),hostname:os.hostname(),transport:'local stdio (no tunnel)',checks:[]};
-const textOf=result=>(result.content??[]).filter(c=>c.type==='text').map(c=>c.text).join('\n');
-async function call(name,args={}) {
-  const result=await client.callTool({name,arguments:args},undefined,{timeout:30000});
+async function call(name,args={},timeout=30000) {
+  const result=await client.callTool({name,arguments:args},undefined,{timeout});
   assert(!result.isError,`${name}: ${textOf(result).slice(0,2000)}`);
   return result;
 }
@@ -45,17 +45,16 @@ try {
   assert(textOf(await call('read_file',{path:probe})).includes(edited));
   report.checks.push('file write, read and edit');
 
-  const search=await call('start_search',{path:fixture,pattern:edited,searchType:'content',literalSearch:true,maxResults:5,timeout_ms:10000,includeHidden:true});
-  let searchText=textOf(search);
-  const searchId=search.structuredContent?.sessionId ?? /(?:Session ID:|sessionId["']?\s*:)\s*["']?([^\s"',}]+)/i.exec(searchText)?.[1];
-  if(!searchText.includes('probe.txt') && searchId) {
-    for(let attempt=0;attempt<10;attempt++) {
-      await new Promise(resolve=>setTimeout(resolve,100));
-      searchText=textOf(await call('get_more_search_results',{sessionId:searchId,offset:0,length:5}));
-      if(searchText.includes('probe.txt')) break;
-    }
-  }
-  assert(searchText.includes('probe.txt'),'Search did not find the fixture');
+  const searchDeadline=Date.now()+10000;
+  const search=await call('start_search',{path:fixture,pattern:edited,searchType:'content',literalSearch:true,maxResults:5,timeout_ms:10000,includeHidden:true},Math.max(1,searchDeadline-Date.now()));
+  const searchId=extractSearchSessionId(search);
+  await pollSearchForMarker({
+    sessionId:searchId,
+    initialText:textOf(search),
+    marker:'probe.txt',
+    deadlineMs:searchDeadline,
+    callMore:async(sessionId,timeoutMs)=>textOf(await call('get_more_search_results',{sessionId,offset:0,length:5},timeoutMs)),
+  });
   report.checks.push('content search');
 
   const started=await call('start_process',{command:"Start-Sleep -Milliseconds 800; Write-Output 'LOCAL_MCP_ASYNC_OK'; Write-Output $PSVersionTable.PSVersion.ToString()",shell:config.powerShellPath,timeout_ms:100});
