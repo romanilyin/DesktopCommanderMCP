@@ -30,6 +30,8 @@ Use a separate tunnel and ChatGPT plugin for each computer. This deployment does
 | `smoke-test.mjs` | Exercise the local MCP protocol and basic tools without connecting a tunnel. |
 | `search-smoke.mjs` | Parse the server's search-session response and poll with an explicit deadline. |
 | `compatibility-test.mjs` | Verify PDF, image, Excel and Markdown integrations against the built server. |
+| `monitor.mjs` / `monitor-core.mjs` | Collect bounded, sanitized tunnel health, latency and incident history without calling MCP tools. |
+| `windows/Monitor.ps1` | Start, stop, inspect and install logon autostart for the separate passive monitor. |
 
 Machine configuration, runtimes, encrypted keys, profiles, logs and reports live in ignored **`<repository>/.local/`**. Never publish that directory. Copy source code between computers and create fresh credentials on each computer. DPAPI storage is not a sandbox against processes running as the same Windows user.
 
@@ -53,3 +55,5 @@ Search verification parses the exact `Started content/file search session: ...` 
 Node.js **22.12.0 or newer** is required; the Windows installer pins 24.21.0 and rejects older overrides before installing dependencies. The `Local Windows MCP` workflow checks Node 22.12.0 and 24.21.0, builds the server, runs these tests, and audits production and development dependencies. See [dependency maintenance](../docs/dependency-maintenance.md) for the scoped overrides and their regression checks.
 
 Custom tools can be added in upstream `src/tools/`, their schemas in `src/tools/schemas.ts`, and registration in `src/server.ts`. Rebuild and restart at a safe point, then refresh the plugin's tools in ChatGPT. Avoid unbounded inline results; prefer pagination or saved artifacts.
+
+For intermittent initialization errors or delays, start passive monitoring with `pwsh ./local/windows/Monitor.ps1 -Action Start`. It does not restart the tunnel or send MCP requests. See the [monitoring guide](../docs/local-monitoring.ru.md) for reports, retention, autostart and custom configurations.
