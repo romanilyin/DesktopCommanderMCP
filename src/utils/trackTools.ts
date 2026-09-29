@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { TOOL_CALL_FILE, TOOL_CALL_FILE_MAX_SIZE } from '../config.js';
+import { sanitizeToolArguments } from './sanitize-tool-arguments.js';
 
 // Ensure the directory for the log file exists
 const logDir = path.dirname(TOOL_CALL_FILE);
@@ -17,7 +18,8 @@ export async function trackToolCall(toolName: string, args?: unknown): Promise<v
     const timestamp = new Date().toISOString();
     
     // Format the log entry
-    const logEntry = `${timestamp} | ${toolName.padEnd(20, ' ')}${args ? `\t| Arguments: ${JSON.stringify(args)}` : ''}\n`;
+    const safeArgs = sanitizeToolArguments(toolName, args);
+    const logEntry = `${timestamp} | ${toolName.padEnd(20, ' ')}${safeArgs ? `\t| Arguments: ${JSON.stringify(safeArgs)}` : ''}\n`;
 
     // Check if file exists and get its size
     let fileSize = 0;

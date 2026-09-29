@@ -2,6 +2,7 @@ import { ServerResult } from '../types.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { sanitizeToolArguments } from './sanitize-tool-arguments.js';
 
 export interface ToolCallRecord {
   timestamp: string;
@@ -275,7 +276,7 @@ class ToolHistory {
     const record: ToolCallRecord = {
       timestamp: new Date().toISOString(),
       toolName,
-      arguments: args,
+      arguments: sanitizeToolArguments(toolName, args),
       output: this.capOutput(output),
       duration
     };
