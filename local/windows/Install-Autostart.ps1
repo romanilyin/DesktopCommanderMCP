@@ -6,7 +6,7 @@ $scriptPath = Join-Path $PSScriptRoot 'Tunnel.ps1'
 if ($scriptPath -match '["\r\n]') { throw 'Script path contains unsupported characters.' }
 $taskName = "Desktop Commander ($($config.alias))"
 $userId = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-$arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -File "' + $scriptPath + '" -Action Connect'
+$arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -File "' + $scriptPath + '" -Action Connect -RespectRecoveryPause'
 $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if ($existing) { throw "Scheduled task $taskName already exists. Remove it explicitly before installing again." }
 $action = New-ScheduledTaskAction -Execute $config.powerShellPath -Argument $arguments -WorkingDirectory (Get-RepoRoot)

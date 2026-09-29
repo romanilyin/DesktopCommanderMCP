@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('Start','Stop','Status','InstallAutostart','RemoveAutostart')][string]$Action = 'Status',
+    [ValidateSet('Start','Stop','Status','InstallAutostart','UpdateAutostart','RemoveAutostart')][string]$Action = 'Status',
     [string]$ConfigPath,
     [string]$NodePath,
     [string]$TaskName
@@ -59,6 +59,66 @@ function Get-OwnedMonitor($Status) {
 $identity = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($ConfigPath.ToLowerInvariant()))).Substring(0, 12)
 if (-not $TaskName) { $TaskName = "Desktop Commander Monitor - $identity" }
 
+function Get-MonitorTask {
+    return Get-ScheduledTask -TaskPath '\' -TaskName $TaskName -ErrorAction SilentlyContinue
+}
+
+function Get-TaskKind($Task) {
+    if ($null -eq $Task -or @($Task.Actions).Count -ne 1) { return $null }
+    $taskAction = @($Task.Actions)[0]
+    $args = [string]$taskAction.Arguments
+    $executable = [string]$taskAction.Execute
+    $expectedDirect = $scriptArg + ' --config ' + $configArg
+    if ([IO.Path]::IsPathFullyQualified($executable) -and
+        [IO.Path]::GetFileName($executable) -ieq 'node.exe' -and
+        $args.Equals($expectedDirect, [StringComparison]::OrdinalIgnoreCase)) { return 'direct' }
+
+    $oldPrefix = '-NoProfile -NonInteractive -WindowStyle Hidden -File ' + (Quote-NativePath $PSCommandPath) +
+        ' -Action Start -ConfigPath ' + $configArg + ' -NodePath '
+    if ([IO.Path]::IsPathFullyQualified($executable) -and
+        [IO.Path]::GetFileName($executable) -ieq 'pwsh.exe' -and
+        $args.StartsWith($oldPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        $oldNode = $args.Substring($oldPrefix.Length)
+        if ($oldNode -match '^"([^"\r\n]+)"$' -and
+            [IO.Path]::IsPathFullyQualified($Matches[1]) -and
+            [IO.Path]::GetFileName($Matches[1]) -ieq 'node.exe') { return 'legacy' }
+    }
+    return $null
+}
+
+function Assert-OwnedTask($Task) {
+    if ($null -eq $Task) { return $null }
+    $kind = Get-TaskKind $Task
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $taskSid = $null
+    try {
+        $userId = [string]$Task.Principal.UserId
+        if ($userId -match '^S-\d-\d+(?:-\d+)+$') {
+            $taskSid = ([Security.Principal.SecurityIdentifier]::new($userId)).Value
+        } elseif ($userId) {
+            $taskSid = ([Security.Principal.NTAccount]::new($userId)).Translate([Security.Principal.SecurityIdentifier]).Value
+        }
+    } catch { $taskSid = $null }
+    $logonType = [string]$Task.Principal.LogonType
+    $runLevel = [string]$Task.Principal.RunLevel
+    if (-not $kind -or $taskSid -ne $currentSid -or
+        $logonType -notin @('Interactive','3') -or
+        $runLevel -notin @('Limited','0')) {
+        throw "Scheduled task $TaskName exists but does not match this monitor; refusing to change or run it."
+    }
+    return $kind
+}
+
+function New-MonitorTaskDefinition {
+    $userId = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $taskAction = New-ScheduledTaskAction -Execute $NodePath -Argument ($scriptArg + ' --config ' + $configArg) -WorkingDirectory (Get-LocalRoot)
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
+    $trigger.Delay = 'PT25S'
+    $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+    return @{ Action = $taskAction; Trigger = $trigger; Principal = $principal; Settings = $settings }
+}
+
 if ($Action -eq 'Status') {
     $status = Get-MonitorStatus
     @{
@@ -71,6 +131,15 @@ if ($Action -eq 'Status') {
 }
 
 if ($Action -eq 'Stop') {
+    $task = Get-MonitorTask
+    $kind = Assert-OwnedTask $task
+    if ($kind -and [string]$task.State -eq 'Running') {
+        Stop-ScheduledTask -TaskPath '\' -TaskName $TaskName -ErrorAction Stop
+        if ($kind -eq 'direct') {
+            Write-Host "Stopped scheduled monitor task $TaskName. The MCP tunnel is unchanged."
+            return
+        }
+    }
     $processInfo = Get-OwnedMonitor (Get-MonitorStatus)
     if ($null -eq $processInfo) { Write-Host 'No matching monitor process is running.'; return }
     # Only the verified observer process is stopped; it has no MCP child process.
@@ -80,15 +149,13 @@ if ($Action -eq 'Stop') {
 }
 
 if ($Action -eq 'RemoveAutostart') {
-    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    $task = Get-MonitorTask
     if ($task) {
-        $expectedScript = Quote-NativePath $PSCommandPath
-        $matched = @($task.Actions | Where-Object {
-            $_.Arguments.Contains($expectedScript, [StringComparison]::OrdinalIgnoreCase) -and
-            $_.Arguments.Contains($configArg, [StringComparison]::OrdinalIgnoreCase)
-        })
-        if ($matched.Count -ne 1) { throw 'Task identity differs; refusing to remove it.' }
-        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+        $kind = Assert-OwnedTask $task
+        if ([string]$task.State -eq 'Running') {
+            throw 'Stop the scheduled monitor before removing autostart.'
+        }
+        Unregister-ScheduledTask -TaskPath '\' -TaskName $TaskName -Confirm:$false
     }
     Write-Host "Monitor autostart removed: $TaskName"
     return
@@ -100,23 +167,42 @@ Assert-ExecutablePath $scriptPath 'monitor script'
 $nodeArg = Quote-NativePath $NodePath
 
 if ($Action -eq 'InstallAutostart') {
-    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+    if (Get-MonitorTask) {
         throw "Scheduled task $TaskName already exists; inspect it or remove it explicitly first."
     }
-    $pwsh = (Get-Process -Id $PID).Path
-    $userId = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -File ' + (Quote-NativePath $PSCommandPath) +
-        ' -Action Start -ConfigPath ' + $configArg + ' -NodePath ' + $nodeArg
-    $taskAction = New-ScheduledTaskAction -Execute $pwsh -Argument $arguments -WorkingDirectory (Get-LocalRoot)
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
-    $trigger.Delay = 'PT25S'
-    $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Limited
-    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-    Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Trigger $trigger -Principal $principal -Settings $settings -Description 'Starts passive local MCP diagnostics without calling MCP tools or restarting the tunnel.' | Select-Object TaskName,State
+    $definition = New-MonitorTaskDefinition
+    Register-ScheduledTask -TaskPath '\' -TaskName $TaskName -Action $definition.Action -Trigger $definition.Trigger -Principal $definition.Principal -Settings $definition.Settings -Description 'Runs passive local MCP diagnostics without calling MCP tools or restarting the tunnel.' | Select-Object TaskName,State
     return
 }
 
+if ($Action -eq 'UpdateAutostart') {
+    $task = Get-MonitorTask
+    if (-not $task) { throw "Scheduled task $TaskName is missing; use InstallAutostart." }
+    $kind = Assert-OwnedTask $task
+    if ([string]$task.State -eq 'Running') {
+        throw 'Stop the scheduled monitor before updating autostart.'
+    }
+    if (Get-OwnedMonitor (Get-MonitorStatus)) {
+        throw 'A verified monitor is running. Stop it with -Action Stop, then update and start the task.'
+    }
+    $definition = New-MonitorTaskDefinition
+    Set-ScheduledTask -TaskPath '\' -TaskName $TaskName -Action $definition.Action -Trigger $definition.Trigger -Principal $definition.Principal -Settings $definition.Settings | Select-Object TaskName,State
+    return
+}
+
+$task = Get-MonitorTask
+$kind = Assert-OwnedTask $task
+if ($kind -eq 'legacy') { throw 'Legacy monitor task exists. Stop the monitor, run -Action UpdateAutostart, then -Action Start.' }
 $existing = Get-OwnedMonitor (Get-MonitorStatus)
+if ($kind -eq 'direct') {
+    if ($existing -and [string]$task.State -ne 'Running') {
+        throw 'A verified monitor is running outside the scheduled task. Stop it with -Action Stop, then start the task.'
+    }
+    if ([string]$task.State -eq 'Running') { Write-Host "Scheduled monitor task is already running: $TaskName"; return }
+    Start-ScheduledTask -TaskPath '\' -TaskName $TaskName -ErrorAction Stop
+    Write-Host "Scheduled monitor task started: $TaskName. Check -Action Status for a fresh heartbeat."
+    return
+}
 if ($existing) { Write-Host "Monitor is already running (PID $($existing.ProcessId))."; return }
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 $child = Start-Process -FilePath $NodePath -ArgumentList ($scriptArg + ' --config ' + $configArg) -WindowStyle Hidden -PassThru -WorkingDirectory (Get-LocalRoot) -RedirectStandardOutput (Join-Path $outputDir 'launcher.stdout.log') -RedirectStandardError (Join-Path $outputDir 'launcher.stderr.log')

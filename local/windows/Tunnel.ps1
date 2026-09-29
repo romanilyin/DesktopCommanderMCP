@@ -1,10 +1,19 @@
-param([ValidateSet('Connect','Status','Stop','Doctor')][string]$Action = 'Connect')
+param([ValidateSet('Connect','Status','Stop','Doctor')][string]$Action = 'Connect', [switch]$RespectRecoveryPause)
 . (Join-Path $PSScriptRoot 'Common.ps1')
 Assert-WindowsPowerShell7
 $config = Get-LocalConfig
 Assert-ExecutablePath $config.tunnelClientPath 'tunnel client'
 $localRoot = Get-LocalRoot
 $stateDir = Join-Path (Get-RepoRoot) '.local/state'
+$recoveryDir = Join-Path $stateDir 'watchdog'
+$recoveryPause = Join-Path $recoveryDir 'paused.json'
+if ($Action -eq 'Stop') {
+    New-Item -ItemType Directory -Force -Path $recoveryDir | Out-Null
+    @{ pausedAt=[DateTimeOffset]::UtcNow.ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath $recoveryPause -Encoding utf8
+} elseif ($Action -eq 'Connect') {
+    if ($RespectRecoveryPause -and (Test-Path -LiteralPath $recoveryPause)) { return }
+    if (-not $RespectRecoveryPause) { Remove-Item -LiteralPath $recoveryPause -Force -ErrorAction SilentlyContinue }
+}
 $profileDir = Join-Path $stateDir 'profiles'
 $tunnelStateDir = Join-Path $stateDir 'tunnel'
 New-Item -ItemType Directory -Force -Path $profileDir,$tunnelStateDir | Out-Null
