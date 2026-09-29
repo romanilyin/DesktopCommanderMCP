@@ -66,6 +66,7 @@ import { trackToolCall } from './utils/trackTools.js';
 import { usageTracker } from './utils/usageTracker.js';
 import { processDockerPrompt } from './utils/dockerPrompt.js';
 import { toolHistory } from './utils/toolHistory.js';
+import { fileProbeTool, inspectFileDescriptor } from './tools/chat-file-probe.js';
 import { handleWelcomePageOnboarding, skipWelcomePageOnboarding } from './utils/welcome-onboarding.js';
 
 import { VERSION } from './version.js';
@@ -304,6 +305,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
         // Build complete tools array
         const allTools = [
+            fileProbeTool,
             // Configuration tools
             {
                 name: "get_config",
@@ -1281,6 +1283,9 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
         // (result is declared above so the finally block can read execution status)
 
         switch (name) {
+            case 'inspect_chat_file_source':
+                result = inspectFileDescriptor(args);
+                break;
             // Config tools
             case "get_config":
                 try {
@@ -1505,7 +1510,7 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
         }
 
         // Track success or failure based on result
-        if (name === 'track_ui_event') {
+        if (name === 'track_ui_event' || name === 'inspect_chat_file_source') {
             return result;
         }
 

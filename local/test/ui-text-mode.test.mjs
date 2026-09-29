@@ -41,6 +41,19 @@ test('text mode removes UI metadata while preserving tools and readable results,
       for (const name of ['start_process', 'write_file', 'read_file']) {
         assert.ok(after.some(tool => tool.name === name), `${name} remains available`);
       }
+      const fileTool = after.find(tool => tool.name === 'inspect_chat_file_source');
+      assert.deepEqual(fileTool._meta['openai/fileParams'], ['file']);
+      assert.ok(fileTool.outputSchema, 'Structured file observation has an output schema');
+      const fileObservation = await client.callTool({ name: 'inspect_chat_file_source', arguments: {
+        file: { download_url: 'https://files.example.com/source?secret=DO_NOT_LOG', file_id: 'PRIVATE_FILE_ID' },
+      } });
+      assert.equal(fileObservation.structuredContent.source_host, 'files.example.com');
+      assert.equal(fileObservation.structuredContent.file_saved, false);
+      assert.equal(fileObservation.content.length, 1);
+      assert.deepEqual(JSON.parse(fileObservation.content[0].text), fileObservation.structuredContent,
+        'File observation is not modified by onboarding or feedback');
+      assert.ok(!JSON.stringify(fileObservation).includes('DO_NOT_LOG'));
+      assert.ok(!JSON.stringify(fileObservation).includes('PRIVATE_FILE_ID'));
       const result = await client.callTool({ name: 'read_file', arguments: { path: probe, offset: 0, length: 2 } });
       assert.notEqual(result.isError, true);
       assert.ok(result.content.some(item => item.type === 'text' && item.text.includes('UI_TEXT_MODE_OK')));
