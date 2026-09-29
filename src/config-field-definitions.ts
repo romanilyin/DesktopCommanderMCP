@@ -28,6 +28,11 @@ export const CONFIG_FIELD_DEFINITIONS = {
     description: 'When on, Desktop Commander sends anonymous usage information that helps improve product quality. When off, no telemetry data is sent.',
     valueType: 'boolean',
   },
+  mcpUiPreviewsEnabled: {
+    label: 'Interactive Previews',
+    description: 'Show interactive file and configuration cards in compatible chats. Turn off to return ordinary tool results without HTML cards. Refresh the client tool list after changing this setting.',
+    valueType: 'boolean',
+  },
   fileReadLineLimit: {
     label: 'File Read Limit',
     description: 'Maximum number of lines returned from a file in one read action. Lower numbers keep responses short and safer; higher numbers return more text at once.',

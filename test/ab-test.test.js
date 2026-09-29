@@ -262,6 +262,28 @@ async function runTests() {
     assert.strictEqual(MCP_UI_HIDE_VARIANT, 'notShowMCPUi');
   });
 
+  await test('explicit MCP UI preference overrides experiments without network waits or telemetry', async () => {
+    for (const preference of [false, true]) {
+      const forbidden = async () => { throw new Error('Explicit preference must bypass experiments'); };
+      const { deps, calls } = createMcpUiDeps({
+        getUserPreference: async () => preference,
+        getExistingAssignment: forbidden,
+        waitForFreshFlags: forbidden,
+        getABTestVariant: forbidden,
+      });
+      assert.strictEqual(await resolveMcpUiPreviewDecision(deps), preference);
+      assert.deepStrictEqual(calls.variantRequests, []);
+      assert.deepStrictEqual(calls.captured, []);
+    }
+  });
+
+  await test('nonboolean MCP UI preferences preserve the legacy decision', async () => {
+    for (const preference of [undefined, null, 'false', 0]) {
+      const { deps } = createMcpUiDeps({ getUserPreference: async () => preference, isFirstRun: () => false });
+      assert.strictEqual(await resolveMcpUiPreviewDecision(deps), true);
+    }
+  });
+
   await test('MCP UI existing users without assignment are not enrolled', async () => {
     const { deps, calls } = createMcpUiDeps({ isFirstRun: () => false });
 
