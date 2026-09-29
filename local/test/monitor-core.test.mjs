@@ -109,6 +109,17 @@ test('counter reset does not create a huge delta', () => {
   assert.deepEqual(analyzeSample(after, before), []);
 });
 
+test('new deadline drops alert independently of counters; quiet or invalid intervals do not', () => {
+  const before = sample(metrics([command('tools/call', '409', 20, 2000)]));
+  const dropped = { ...before, tunnelLog: { deadlineDropCount: 2 } };
+  const expected = [{ code: 'command_response_deadline', severity: 'error', evidence: { count: 2 } }];
+  assert.deepEqual(analyzeSample(dropped, before), expected);
+  assert.deepEqual(analyzeSample(dropped), expected);
+  for (const count of [undefined, null, 0, -1, 0.5, '2', NaN, Infinity]) {
+    assert.deepEqual(analyzeSample({ ...before, tunnelLog: { deadlineDropCount: count } }, dropped), []);
+  }
+});
+
 test('metrics outage and recovery cannot turn cumulative history into a fresh alert', () => {
   const before = sample(metrics([command('tools/call', '409', 24, 3000)]));
   const outage = sample({ status: 'unknown', gauges: {}, counters: { commands: [], initializeCount: null } });

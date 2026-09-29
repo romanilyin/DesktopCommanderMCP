@@ -152,6 +152,12 @@ export function analyzeSample(current, previous = null) {
   if (!current || typeof current !== 'object') return [incident('sample_unknown', 'warning', {})];
   const incidents = [];
   const now = isoDate(current.observedAt);
+  // Tail counts cover only newly consumed records, not cumulative metrics. A dropped
+  // response may never increment a 5xx counter and can coexist with healthy probes.
+  const deadlineDrops = current.tunnelLog?.deadlineDropCount;
+  if (Number.isSafeInteger(deadlineDrops) && deadlineDrops > 0) {
+    incidents.push(incident('command_response_deadline', 'error', { count: deadlineDrops }));
+  }
   if (current.metrics?.status !== 'ok' && (!previous || previous.metrics?.status === 'ok')) {
     incidents.push(incident('metrics_unknown', 'warning', {}));
   }

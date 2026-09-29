@@ -132,7 +132,11 @@ export function classifyTunnelLine(line, observedAt) {
   const component = typeof entry.component === 'string' ? entry.component.toLowerCase() : '';
   const level = typeof entry.level === 'string' ? entry.level.toLowerCase() : '';
   let event;
-  if (/mcp_initialization_required|initialization required/.test(message)) event = 'initialization_required_409';
+  // tunnel-client emits these failed deliveries at INFO, even while probes stay green.
+  if (/command response deadline reached; dropping without posting a response|dropping command whose response deadline has passed/.test(message)) {
+    event = 'command_deadline_expired';
+  }
+  else if (/mcp_initialization_required|initialization required/.test(message)) event = 'initialization_required_409';
   else if (/initialized notification|notifications\/initialized|initialize ack|initialized ack/.test(message)) event = 'initialized_ack';
   else if (/acknowledged notification|notification acknowledged/.test(message)) event = 'notification_ack';
   else if (/forwarded|forwarding|dispatch(?:ed|ing)? command/.test(message) &&
@@ -329,6 +333,7 @@ export async function createMonitor(config) {
         };
         const tailResult = await tail.poll(observedAt);
         sample.tunnelLog = { state: tailResult.state, eventCount: tailResult.events.length,
+          deadlineDropCount: tailResult.events.filter(event => event.event === 'command_deadline_expired').length,
           cursorBytes: Number.isSafeInteger(tailResult.cursorBytes) ? tailResult.cursorBytes : null };
         for (const event of tailResult.events) await appendJournal(outputDir, 'events.jsonl', event);
         await appendJournal(outputDir, 'samples.jsonl', sample);

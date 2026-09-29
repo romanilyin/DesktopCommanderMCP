@@ -190,6 +190,60 @@ test('--once survives a missing URL file and exits with fixed, nonsecret status'
   } finally { await files.cleanup(); }
 });
 
+test('INFO deadline drops surface despite green probes and unchanged counters, without replay or payloads', async () => {
+  const files = await fixture();
+  const { server, origin } = await startServer({ count: 0 });
+  const messages = [
+    'command response deadline reached; dropping without posting a response',
+    'dropping command whose response deadline has passed',
+  ];
+  const entries = messages.map(msg => JSON.stringify({ level: 'info', msg: msg + ' SECRET_PAYLOAD',
+    request_id: 'secret-request-id', command: 'SECRET_COMMAND', api_key: 'SECRET_KEY' })).join('\n') + '\n';
+  let monitor;
+  try {
+    await fs.writeFile(files.config.healthUrlFile, origin);
+    await fs.writeFile(files.config.tunnelLogFile, entries);
+    monitor = await createMonitor(files.config);
+    const first = await monitor.poll();
+    assert.equal(first.tunnelLog.deadlineDropCount, 0, 'Historical drops establish a quiet baseline');
+    await assert.rejects(fs.stat(path.join(files.config.outputDir, 'incidents.jsonl')), { code: 'ENOENT' });
+
+    await fs.appendFile(files.config.tunnelLogFile, entries);
+    const second = await monitor.poll();
+    assert.equal(second.tunnelLog.deadlineDropCount, 2);
+    assert.ok(Object.values(second.probes).every(probe => probe.state === 'ok'));
+    assert.deepEqual(second.metrics.counters, first.metrics.counters);
+    const incidentFile = path.join(files.config.outputDir, 'incidents.jsonl');
+    const recorded = await fs.readFile(incidentFile, 'utf8');
+    const incidents = recorded.trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(incidents.length, 1);
+    assert.equal(incidents[0].code, 'command_response_deadline');
+    assert.equal(incidents[0].severity, 'error');
+    assert.deepEqual(incidents[0].evidence, { count: 2 });
+    assert.equal(incidents[0].context.at(-1).tunnelLog.deadlineDropCount, 2);
+
+    const third = await monitor.poll();
+    assert.equal(third.tunnelLog.deadlineDropCount, 0);
+    assert.equal(await fs.readFile(incidentFile, 'utf8'), recorded, 'No replay on a quiet interval');
+    const status = JSON.parse(await fs.readFile(path.join(files.config.outputDir, 'status.json'), 'utf8'));
+    assert.equal(status.recentSamples[1].tunnelLog.deadlineDropCount, 2);
+    const events = await fs.readFile(path.join(files.config.outputDir, 'events.jsonl'), 'utf8');
+    assert.deepEqual(events.trim().split('\n').map(line => JSON.parse(line).event),
+      ['command_deadline_expired', 'command_deadline_expired']);
+    const persisted = recorded + events + JSON.stringify(status) +
+      await fs.readFile(path.join(files.config.outputDir, 'samples.jsonl'), 'utf8');
+    for (const forbidden of ['SECRET_PAYLOAD', 'SECRET_COMMAND', 'SECRET_KEY', 'secret-request-id']) {
+      assert.ok(!persisted.includes(forbidden), `${forbidden} leaked into monitor state`);
+    }
+    assert.equal(classifyTunnelLine(JSON.stringify({ level: 'info', msg: 'response deadline has not passed' }),
+      new Date().toISOString()), null);
+  } finally {
+    await monitor?.release();
+    await closeServer(server);
+    await files.cleanup();
+  }
+});
+
 test('tunnel parser ignores arbitrary text and oversized/unrecognized records', () => {
   const at = new Date().toISOString();
   assert.equal(classifyTunnelLine('not json', at), null);
