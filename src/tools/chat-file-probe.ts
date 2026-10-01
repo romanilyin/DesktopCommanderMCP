@@ -8,7 +8,7 @@ export const fileProbeTool = {
     description: 'Check whether ChatGPT can pass a selected attachment or generated image to this computer. '
         + 'Pass the actual file using the file parameter. Reports field presence and the HTTPS source host only. '
         + 'Does not download, save, modify, or execute the file. Do not manufacture a file ID or download URL. '
-        + 'This is a compatibility check; importing files to disk is not yet available.',
+        + 'This is a compatibility check. To save the image, use import_chat_file instead.',
     inputSchema: {
         type: 'object' as const,
         properties: {

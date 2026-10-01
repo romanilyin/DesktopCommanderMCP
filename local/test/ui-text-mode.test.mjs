@@ -42,6 +42,19 @@ test('text mode removes UI metadata while preserving tools and readable results,
         assert.ok(after.some(tool => tool.name === name), `${name} remains available`);
       }
       const fileTool = after.find(tool => tool.name === 'inspect_chat_file_source');
+      const importer = after.find(tool => tool.name === 'import_chat_file');
+      assert.deepEqual(importer._meta['openai/fileParams'], ['file']);
+      assert.equal(importer.annotations.readOnlyHint, false);
+      assert.equal(after.find(tool => tool.name === 'get_chat_file_transfer').annotations.readOnlyHint, true);
+      const transferStatus = await client.callTool({ name: 'get_chat_file_transfer', arguments: { transfer_id: 'isolated-unknown-transfer' } });
+      assert.equal(transferStatus.structuredContent.status, 'unknown');
+      const rejectedImport = await client.callTool({ name: 'import_chat_file', arguments: {
+        file: { download_url: 'http://127.0.0.1/DO_NOT_LOG', file_id: 'PRIVATE_FILE_ID' },
+        destination_path: path.join(dir, 'import.png'), transfer_id: 'isolated-rejected-import',
+      } });
+      assert.equal(rejectedImport.isError, true);
+      assert.ok(!JSON.stringify(rejectedImport).includes('DO_NOT_LOG'));
+      await assert.rejects(fs.stat(path.join(dir, 'import.png')), { code: 'ENOENT' });
       assert.deepEqual(fileTool._meta['openai/fileParams'], ['file']);
       assert.ok(fileTool.outputSchema, 'Structured file observation has an output schema');
       const fileObservation = await client.callTool({ name: 'inspect_chat_file_source', arguments: {
