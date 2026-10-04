@@ -32,6 +32,7 @@ Use a separate tunnel and ChatGPT plugin for each computer. This deployment does
 | `compatibility-test.mjs` | Verify PDF, image, Excel and Markdown integrations against the built server. |
 | `monitor.mjs` / `monitor-core.mjs` | Collect bounded, sanitized tunnel health, latency and incident history without calling MCP tools. |
 | `windows/Monitor.ps1` | Start, stop, inspect and install logon autostart for the separate passive monitor. |
+| `windows/RuntimeWatchdog.ps1` / `RuntimeWatchdogHidden.vbs` | Check for an absent runtime once a minute through a hidden Windows Script Host launcher; preserve bounded recovery and task exit codes. |
 
 Machine configuration, runtimes, encrypted keys, profiles, logs and reports live in ignored **`<repository>/.local/`**. Never publish that directory. Copy source code between computers and create fresh credentials on each computer. DPAPI storage is not a sandbox against processes running as the same Windows user.
 

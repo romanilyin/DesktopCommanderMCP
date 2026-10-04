@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('Check','Install','Remove','Pause','Resume','Status')][string]$Action = 'Check',
+    [ValidateSet('Check','Install','UpdateHiddenLaunch','Remove','Pause','Resume','Status')][string]$Action = 'Check',
     [Parameter(Mandatory)][string]$ConfigPath
 )
 Set-StrictMode -Version Latest
@@ -16,6 +16,9 @@ if ($ConfigPath -match '["\r\n]') { throw 'Invalid config path.' }
 $statusPath = Join-Path $config.outputDir 'status.json'
 $pausePath = Join-Path $config.outputDir 'paused.json'
 $arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -File "' + $PSCommandPath + '" -Action Check -ConfigPath "' + $ConfigPath + '"'
+$hiddenLauncher = Join-Path $PSScriptRoot 'RuntimeWatchdogHidden.vbs'
+$scriptHostPath = Join-Path ([Environment]::GetFolderPath('System')) 'wscript.exe'
+$hiddenArguments = '//B //NoLogo "' + $hiddenLauncher + '" "' + $config.powerShellPath + '" "' + $PSCommandPath + '" "' + $ConfigPath + '"'
 
 function Test-OwnedPrincipal($Task) {
     try {
@@ -38,9 +41,18 @@ function Get-OwnedConnectTask {
     return $task
 }
 function Test-OwnedWatchdogTask($Task) {
-    return $Task -and $Task.Actions.Count -eq 1 -and $Task.Actions[0].Execute -ieq $config.powerShellPath -and
-        $Task.Actions[0].Arguments -ceq $arguments -and
-        (Test-OwnedPrincipal $Task)
+    if (-not $Task -or $Task.Actions.Count -ne 1 -or -not (Test-OwnedPrincipal $Task)) { return $false }
+    $taskAction = $Task.Actions[0]
+    $legacy = $taskAction.Execute -ieq $config.powerShellPath -and $taskAction.Arguments -ceq $arguments
+    $hidden = $taskAction.Execute -ieq $scriptHostPath -and $taskAction.Arguments -ceq $hiddenArguments
+    return $legacy -or $hidden
+}
+function New-HiddenWatchdogAction {
+    foreach ($path in @($hiddenLauncher, $scriptHostPath, $config.powerShellPath, $PSCommandPath, $ConfigPath)) {
+        # WScript.Shell.Run expands environment variables, so reject percent signs as well.
+        if ($path -match '[%"\r\n]' -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { throw 'Invalid hidden watchdog launch path.' }
+    }
+    return New-ScheduledTaskAction -Execute $scriptHostPath -Argument $hiddenArguments -WorkingDirectory $PSScriptRoot
 }
 function Save-WatchdogStatus([hashtable]$Value) {
     $temporary = Join-Path $config.outputDir ('status-' + [Guid]::NewGuid().ToString('N') + '.tmp')
@@ -80,6 +92,13 @@ if ($Action -eq 'Remove') {
     }
     return
 }
+if ($Action -eq 'UpdateHiddenLaunch') {
+    $task = Get-ScheduledTask -TaskPath '\' -TaskName $config.watchdogTaskName -ErrorAction Stop
+    if (-not (Test-OwnedWatchdogTask $task)) { throw 'Watchdog task identity differs.' }
+    # Replace only the action; keep its schedule, principal, limits and running services.
+    Set-ScheduledTask -TaskPath '\' -TaskName $config.watchdogTaskName -Action (New-HiddenWatchdogAction) | Select-Object TaskName,State
+    return
+}
 New-Item -ItemType Directory -Force -Path $config.outputDir | Out-Null
 if ($Action -eq 'Pause') {
     @{ pausedAt=[DateTimeOffset]::UtcNow.ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath $pausePath -Encoding utf8
@@ -91,7 +110,7 @@ if ($Action -eq 'Install') {
     if ([int]$connectTask.Settings.RestartCount -ne 0) { throw 'Disable Connect task failure retries before enabling the watchdog retry policy.' }
     if (Get-ScheduledTask -TaskPath '\' -TaskName $config.watchdogTaskName -ErrorAction SilentlyContinue) { throw 'Watchdog task already exists; inspect or remove it explicitly.' }
     $userId=[Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $taskAction=New-ScheduledTaskAction -Execute $config.powerShellPath -Argument $arguments -WorkingDirectory $PSScriptRoot
+    $taskAction=New-HiddenWatchdogAction
     $trigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1)
     $logon=New-ScheduledTaskTrigger -AtLogOn -User $userId
     $logon.Delay='PT45S'
