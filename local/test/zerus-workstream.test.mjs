@@ -5,6 +5,7 @@ import {validateProfile,invocation,command,run} from '../zerus-workstream.mjs';
 const root=path.resolve('fixture');
 const profile=()=>({schema_version:1,transport:'local',hgs:path.join(root,'hgs'),config_dir:path.join(root,'config'),state_dir:path.join(root,'state'),machine:'pc-a',source_commit:'a'.repeat(40)});
 const id='11111111-2222-4333-8444-555555555555';
+const nativeOs=({win32:'windows',linux:'linux',darwin:'macos'})[process.platform];
 test('explicit profiles reject unknown transport, fields and relative roots',()=>{
  assert.equal(validateProfile(profile()).machine,'pc-a');
  for(const change of [{transport:'ssh'},{extra:true},{hgs:'hgs'},{source_commit:'main'},{machine:'a;shutdown'}])assert.throws(()=>validateProfile({...profile(),...change}));
@@ -37,6 +38,15 @@ test('dirty and mismatched receiver identity refuses before mutation',async()=>{
 });
 test('uncertain write is issued once and never automatically replayed',async()=>{
  let writes=0;
- const runner=async c=>{if(c.args[0]==='--help')return 'external-workstream-v1';if(c.args[0]==='version')return JSON.stringify({source_commit:'a'.repeat(40),source_dirty:false,distribution:'romanilyin/zerus'});writes++;throw Error('unknown outcome');};
+ const runner=async c=>{if(c.args[0]==='--help')return 'external-workstream-v1';if(c.args[0]==='version')return JSON.stringify({source_commit:'a'.repeat(40),source_dirty:false,distribution:'romanilyin/zerus',os:nativeOs});writes++;throw Error('unknown outcome');};
  await assert.rejects(run(profile(),'checkpoint',{request_id:id},runner));assert.equal(writes,1);
+});
+
+test('a source-matched receiver from the wrong OS never receives a write',async()=>{
+ const calls=[];
+ await assert.rejects(run(profile(),'checkpoint',{request_id:id},async c=>{
+   calls.push(c.args);
+   return calls.length===1?'external-workstream-v1':JSON.stringify({source_commit:'a'.repeat(40),source_dirty:false,distribution:'romanilyin/zerus',os:nativeOs==='linux'?'windows':'linux'});
+ }));
+ assert.equal(calls.length,2);
 });

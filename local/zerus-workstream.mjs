@@ -68,6 +68,8 @@ export async function run(profile,action,payload,runner=execute) {
   require(help.includes('external-workstream-v1'),'Selected receiver does not advertise the cooperative workstream contract');
   const identity=JSON.parse(await runner(invocation(profile,['version','--json']),null));
   require(identity.source_commit===profile.source_commit&&identity.source_dirty===false&&identity.distribution==='romanilyin/zerus','Receiver source identity differs from the reviewed clean build');
+  const expectedOs=profile.transport==='wsl-local'?'linux':({win32:'windows',linux:'linux',darwin:'macos'})[process.platform];
+  require(expectedOs && identity.os===expectedOs,'Receiver operating system differs from the selected execution environment');
   const raw=await runner(invocation(profile,request.args),request.input);
   return JSON.parse(raw);
 }
