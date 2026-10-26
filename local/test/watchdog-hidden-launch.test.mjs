@@ -55,7 +55,9 @@ public static class HiddenLaunchProbe {
 });
 
 test('hidden task migration accepts only owned actions and preserves other task fields', { skip: process.platform !== 'win32' }, async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dc-watchdog-migration-'));
+  // PowerShell expands 8.3 paths in $PSCommandPath/$PSScriptRoot (e.g. RUNNER~1 in CI).
+  // Build the fixture's exact action arguments from the same resolved path.
+  const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'dc-watchdog-migration-')));
   try {
     for (const name of ['RuntimeWatchdog.ps1', 'RuntimeWatchdogHidden.vbs', 'RuntimeRecoveryPolicy.ps1']) {
       await fs.copyFile(path.join(windows, name), path.join(dir, name));
@@ -74,30 +76,40 @@ test('hidden task migration accepts only owned actions and preserves other task 
       $oldArgs='-NoProfile -NonInteractive -WindowStyle Hidden -File "'+$scriptPath+'" -Action Check -ConfigPath "'+$cfgPath+'"'
       $hostPath=Join-Path ([Environment]::GetFolderPath('System')) 'wscript.exe'
       $newArgs='//B //NoLogo "'+(Join-Path $dir 'RuntimeWatchdogHidden.vbs')+'" "'+$pwsh+'" "'+$scriptPath+'" "'+$cfgPath+'"'
+      Import-Module ScheduledTasks
       function Get-ScheduledTask { param($TaskPath,$TaskName,$ErrorAction) return $global:fixture }
-      function New-ScheduledTaskAction { param($Execute,$Argument,$WorkingDirectory)
-        return [pscustomobject]@{Execute=$Execute;Arguments=$Argument;WorkingDirectory=$WorkingDirectory} }
       function Set-ScheduledTask { param($TaskPath,$TaskName,$Action)
         $global:updated=$true
         if ($PSBoundParameters.Count -ne 3 -or $TaskPath -cne '\\' -or $TaskName -cne 'fixture-watchdog') { throw 'Unexpected mutation' }
         if ($Action.Execute -ine $hostPath -or $Action.Arguments -cne $newArgs -or $Action.WorkingDirectory -ine $dir) { throw 'Wrong hidden action' }
         return $global:fixture }
       $results=@{}
-      foreach($case in @('legacy','hidden','other-user','changed-config','changed-wrapper','extra-argument','multiple-actions')) {
-        $global:fixture=[pscustomobject]@{TaskName='fixture-watchdog';State='Ready';
-          Principal=[pscustomobject]@{UserId=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;LogonType='Interactive';RunLevel='Limited'};
-          Actions=@([pscustomobject]@{Execute=$pwsh;Arguments=$oldArgs})}
+      foreach($case in @('legacy','hidden','other-user','non-interactive','elevated','changed-executable','changed-script','changed-config','changed-wrapper','extra-argument','multiple-actions')) {
+        # Use real CIM objects, including Scheduler's numeric logon/run-level values.
+        # New-* constructs definitions only; Get/Set never reach the live Scheduler.
+        $principal=New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value) -LogonType Interactive -RunLevel Limited
+        $taskAction=New-ScheduledTaskAction -Execute $pwsh -Argument $oldArgs
+        $trigger=New-ScheduledTaskTrigger -Once -At ([datetime]'2030-01-01T00:00:00')
+        $settings=New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Seconds 50)
+        $global:fixture=New-ScheduledTask -Action $taskAction -Principal $principal -Trigger $trigger -Settings $settings -Description 'Migration fixture'
         if($case -in @('hidden','changed-wrapper','extra-argument')) { $fixture.Actions[0].Execute=$hostPath;$fixture.Actions[0].Arguments=$newArgs }
         switch($case) {
-          'other-user' {$fixture.Principal.UserId='S-1-5-18'}
-          'changed-config' {$fixture.Actions[0].Arguments=$oldArgs+' extra'}
+          'other-user' {$fixture.Principal.UserId='S-1-5-19'}
+          'non-interactive' {$fixture.Principal.LogonType=2}
+          'elevated' {$fixture.Principal.RunLevel=1}
+          'changed-executable' {$fixture.Actions[0].Execute=$hostPath}
+          'changed-script' {$fixture.Actions[0].Arguments=$oldArgs.Replace('RuntimeWatchdog.ps1','Other.ps1')}
+          'changed-config' {$fixture.Actions[0].Arguments=$oldArgs.Replace('watchdog-config.json','other-config.json')}
           'changed-wrapper' {$fixture.Actions[0].Arguments=$newArgs.Replace('RuntimeWatchdogHidden.vbs','Other.vbs')}
           'extra-argument' {$fixture.Actions[0].Arguments=$newArgs+' extra'}
           'multiple-actions' {$fixture.Actions+= $fixture.Actions[0]}
         }
+        $before=$fixture | Select-Object Principal,Triggers,Settings,Description | ConvertTo-Json -Depth 20 -Compress
         $global:updated=$false
         try { & $scriptPath -Action UpdateHiddenLaunch -ConfigPath $cfgPath | Out-Null }
         catch { if($_.Exception.Message -ne 'Watchdog task identity differs.') { throw } }
+        $after=$fixture | Select-Object Principal,Triggers,Settings,Description | ConvertTo-Json -Depth 20 -Compress
+        if($before -cne $after) { throw 'Other task fields changed' }
         $results[$case]=$global:updated
       }
       $results | ConvertTo-Json -Compress
