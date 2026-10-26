@@ -8,18 +8,20 @@
  * 2. Creates a bundle directory structure 
  * 3. Generates a proper MCPB manifest.json
  * 4. Copies the built server and dependencies
- * 5. Uses mcpb CLI to create the final .mcpb bundle
+ * 5. Validates the manifest and creates the unsigned MCPB ZIP archive
  */
 
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const { createBundlePackageJson } = require('./mcpb-package-json.cjs');
+const { validateManifest, packBundle } = require('./mcpb-pack.cjs');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const BUNDLE_DIR = path.join(PROJECT_ROOT, 'mcpb-bundle');
 const MANIFEST_PATH = path.join(BUNDLE_DIR, 'manifest.json');
 
+async function main() {
 console.log('🏗️  Building Desktop Commander MCPB Bundle...');
 
 // Step 0: Download all ripgrep binaries for cross-platform support
@@ -165,7 +167,7 @@ try {
 // Step 7: Validate manifest
 console.log('🔍 Validating manifest...');
 try {
-    execSync(`npx @anthropic-ai/mcpb validate "${MANIFEST_PATH}"`, { stdio: 'inherit' });
+    validateManifest(BUNDLE_DIR);
     console.log('✅ Manifest validation passed');
 } catch (error) {
     console.error('❌ Manifest validation failed:', error.message);
@@ -176,7 +178,7 @@ console.log('📦 Creating .mcpb bundle...');
 const outputFile = path.join(PROJECT_ROOT, `${manifest.name}-${manifest.version}.mcpb`);
 
 try {
-    execSync(`npx @anthropic-ai/mcpb pack "${BUNDLE_DIR}" "${outputFile}"`, { stdio: 'inherit' });
+    await packBundle(BUNDLE_DIR, outputFile);
     console.log('✅ MCPB bundle created successfully!');
     console.log(`📁 Bundle location: ${outputFile}`);
 } catch (error) {
@@ -197,3 +199,6 @@ console.log('To submit to Anthropic directory:');
 console.log('- Ensure privacy policy is accessible at the GitHub URL');
 console.log('- Complete destructive operation annotations (✅ Done)');
 console.log('- Submit via Anthropic desktop extensions interest form');
+}
+
+main().catch(error => { console.error(error); process.exitCode = 1; });

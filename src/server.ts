@@ -13,7 +13,7 @@ import {
     type CallToolRequest,
     type InitializeRequest,
 } from "@modelcontextprotocol/sdk/types.js";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { zodToJsonSchema } from "./utils/json-schema.js";
 import { getSystemInfo, getOSSpecificGuidance, getPathGuidance, getDevelopmentToolGuidance } from './utils/system-info.js';
 
 // Get system information once at startup
