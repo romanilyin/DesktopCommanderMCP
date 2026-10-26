@@ -10,7 +10,7 @@ const headers = {
   'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'",
   'X-Frame-Options': 'DENY', 'Referrer-Policy': 'same-origin'
 };
-const page = content => '<!doctype html><html lang="ru"><meta charset="utf-8"><title>Desktop Commander — ключ туннеля</title>' +
+const page = content => '<!doctype html><html lang="ru"><meta charset="utf-8"><title>SGG Local MCP — ключ туннеля</title>' +
   '<style>body{font:18px system-ui;max-width:680px;margin:70px auto;padding:24px;background:#171b22;color:#eee}input{display:block;width:95%;font:20px system-ui;margin:20px 0;padding:12px}button{font:18px system-ui;padding:12px}p{line-height:1.6}a{color:#95e1be}</style>' + content + '</html>';
 
 // Dependency injection keeps tests independent of real keys, DPAPI and disk.
@@ -26,7 +26,7 @@ export async function startKeyEntry({ encrypt, save, port = 0, lifetimeMs = 15 *
       res.writeHead(303, { ...headers, Location: '/' }); res.end(); return;
     }
     if (req.method === 'GET' && req.url === '/') {
-      reply(200, '<h1>Desktop Commander Local</h1><h2>Runtime API key</h2>' +
+      reply(200, '<h1>SGG Local MCP</h1><h2>Runtime API key</h2>' +
         '<p>Ключ остаётся на этом ПК и сохраняется с шифрованием Windows DPAPI. Не отправляйте его в чат.</p>' +
         '<form method="post" action="/save" autocomplete="off"><input type="hidden" name="csrf" value="' + csrf + '">' +
         '<label for="key">Вставьте ключ OpenAI Platform</label><input autofocus id="key" name="key" type="password" autocomplete="off" required maxlength="2000">' +

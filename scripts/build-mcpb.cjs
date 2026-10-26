@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Build script for creating Desktop Commander MCPB bundle
+ * Build script for creating SGG Local MCP MCPB bundle
  * 
  * This script:
  * 1. Builds the TypeScript project
@@ -22,7 +22,7 @@ const BUNDLE_DIR = path.join(PROJECT_ROOT, 'mcpb-bundle');
 const MANIFEST_PATH = path.join(BUNDLE_DIR, 'manifest.json');
 
 async function main() {
-console.log('🏗️  Building Desktop Commander MCPB Bundle...');
+console.log('🏗️  Building SGG Local MCP MCPB Bundle...');
 
 // Step 0: Download all ripgrep binaries for cross-platform support
 console.log('🌍 Downloading ripgrep binaries for all platforms...');
@@ -73,6 +73,7 @@ const manifestContent = manifestTemplate.replace('{{VERSION}}', packageJson.vers
 let manifest;
 try {
     manifest = JSON.parse(manifestContent);
+    manifest.version = packageJson.version;
 } catch (error) {
     console.error('❌ Invalid JSON in manifest template:', error.message);
     process.exit(1);
@@ -87,9 +88,11 @@ const filesToCopy = [
     'package.json',
     'README.md',
     'LICENSE',
-    'PRIVACY.md',
-    'icon.png'
+    'PRIVACY.md'
 ];
+
+// Icons are optional; copy only assets declared by this fork's manifest.
+filesToCopy.push(...[manifest.icon, ...(manifest.icons ?? []).map(icon => icon.src)].filter(Boolean));
 
 filesToCopy.forEach(file => {
     const srcPath = path.join(PROJECT_ROOT, file);
@@ -187,7 +190,7 @@ try {
 }
 
 console.log('');
-console.log('🎉 Desktop Commander MCPB bundle is ready!');
+console.log('🎉 SGG Local MCP MCPB bundle is ready!');
 console.log('');
 console.log('Next steps:');
 console.log('1. Test the bundle by installing it in Claude Desktop:');
@@ -195,10 +198,7 @@ console.log('   Settings → Extensions → Advanced Settings → Install Extens
 console.log(`2. Select the file: ${outputFile}`);
 console.log('3. Configure any settings and test the functionality');
 console.log('');
-console.log('To submit to Anthropic directory:');
-console.log('- Ensure privacy policy is accessible at the GitHub URL');
-console.log('- Complete destructive operation annotations (✅ Done)');
-console.log('- Submit via Anthropic desktop extensions interest form');
+console.log('This command creates a local bundle; it does not publish it to a registry.');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });

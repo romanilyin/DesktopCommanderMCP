@@ -6,7 +6,6 @@ import { createCompactRowShellController, type ToolShellController } from '../..
 import { createWidgetStateStorage } from '../../shared/widget-state.js';
 import { renderCompactRow } from '../../shared/compact-row.js';
 import { connectWithSharedHostContext, type UiChromeState } from '../../shared/host-context.js';
-import { createUiEventTracker } from '../../shared/ui-event-tracker.js';
 import { attachDirectoryHandlers } from './directory-controller.js';
 import { buildDocumentLayout } from './document-layout.js';
 import { getDocumentFullscreenAvailability, parseReadRange, stripReadStatusLine } from './document-workspace.js';
@@ -21,13 +20,12 @@ import {
 } from './markdown/conflict-dialog.js';
 import type { RenderPayload } from './model.js';
 import { attachPanelActions } from './panel-actions.js';
-import { extractRenderPayload, extractToolText, getFileExtensionForAnalytics, isLikelyUrl, isPreviewStructuredContent } from './payload-utils.js';
+import { extractRenderPayload, extractToolText, getFileExtension, isLikelyUrl, isPreviewStructuredContent } from './payload-utils.js';
 import type { HtmlPreviewMode } from './types.js';
 
 let isExpanded = false;
 let hideSummaryRow = false;
 let onRender: (() => void) | undefined;
-let trackUiEvent: ((event: string, params?: Record<string, unknown>) => void) | undefined;
 let conflictDialogController: ConflictDialogController | undefined;
 let rpcCallTool: ((name: string, args: Record<string, unknown>) => Promise<unknown>) | undefined;
 let rpcUpdateContext: ((text: string) => void) | undefined;
@@ -46,10 +44,6 @@ let inlinePayloadBeforeFullscreen: RenderPayload | undefined;
 let directoryBackPayload: RenderPayload | undefined;
 let selectionAbortController: AbortController | null = null;
 const markdownEditorAppCache = new Map<string, { appName: string; appPath?: string }>();
-
-function getTelemetryToolName(payload: RenderPayload | undefined): string {
-    return typeof payload?.sourceTool === 'string' ? payload.sourceTool : 'read_file';
-}
 
 async function callToolIfReady(name: string, args: Record<string, unknown>): Promise<unknown | undefined> {
     return rpcCallTool ? rpcCallTool(name, args) : undefined;
@@ -131,7 +125,6 @@ const markdownController = createMarkdownController({
         rerenderCurrent?.();
     },
     updateSaveStatus: updateSaveStatusDOM,
-    trackUiEvent: (event, params) => trackUiEvent?.(event, params),
     showConflictDialog: (options) => {
         if (conflictDialogController) {
             conflictDialogController.open(options);
@@ -175,10 +168,9 @@ function pickReadArgs(args: unknown): Record<string, unknown> | undefined {
 
 // The host doesn't send the tool name with tool-input, so infer mutations from
 // their arg shape: write_file carries `content`; edit_block `old_string`/
-// `new_string`. Drives two things: timing (a mutation's tool-input arrives
-// BEFORE the file changes, so those pull at tool-result time instead of input
-// time) and telemetry (the pulled payload's sourceTool is re-stamped with the
-// originating tool, since the pull itself is always a read_file).
+// `new_string`. A mutation's tool-input arrives before the file changes, so
+// those calls pull at tool-result time instead of input time. Preserve the
+// originating tool on the payload even though the pull itself is read_file.
 function inferMutationTool(args: unknown): 'write_file' | 'edit_block' | undefined {
     if (!args || typeof args !== 'object') {
         return undefined;
@@ -330,7 +322,7 @@ export function renderApp(
         markdownController,
     });
     const markdownWorkspace = payload.fileType === 'markdown' ? markdownController.getState(payload) : undefined;
-    const fileExtension = getFileExtensionForAnalytics(payload.filePath);
+    const fileExtension = getFileExtension(payload.filePath);
     const isFullscreen = getCurrentDisplayMode() === 'fullscreen';
     const canGoFullscreen = !isFullscreen && getDocumentFullscreenAvailability({
         availableDisplayModes: getAvailableDisplayModes(),
@@ -373,8 +365,6 @@ export function renderApp(
         htmlMode,
         getIsExpanded: () => isExpanded,
         callTool: callToolIfReady,
-        trackUiEvent,
-        getFileExtensionForAnalytics,
         buildOpenInFolderCommand: (filePath) => buildOpenInFolderCommand(filePath, isLikelyUrl),
         buildOpenInEditorCommand: (filePath) => buildOpenInEditorCommand(filePath, isLikelyUrl, markdownEditorAppCache),
         render: (nextPayload, nextHtmlMode = 'rendered', nextExpanded = isExpanded) => {
@@ -392,8 +382,6 @@ export function renderApp(
         payload,
         isMarkdownEditing: payload.fileType === 'markdown' && !!markdownWorkspace,
         updateContext: rpcUpdateContext,
-        trackUiEvent,
-        getFileExtensionForAnalytics,
         previousAbortController: selectionAbortController,
     });
 
@@ -428,16 +416,6 @@ export function renderApp(
         initialExpanded: layout.effectiveExpanded,
         onToggle: (expanded) => {
             isExpanded = expanded;
-            trackUiEvent?.(expanded ? 'expand' : 'collapse', {
-                file_type: payload.fileType,
-                file_extension: fileExtension,
-            });
-        },
-        onScrollAfterExpand: () => {
-            trackUiEvent?.('scroll_after_expand', {
-                file_type: payload.fileType,
-                file_extension: fileExtension,
-            });
         },
         onRender,
     });
@@ -465,7 +443,7 @@ export function bootstrapApp(): void {
     conflictDialogController = createConflictDialogController({ container: document });
 
     const app = new App(
-        { name: 'Desktop Commander File Preview', version: '1.0.0' },
+        { name: 'SGG Local MCP File Preview', version: '1.0.0' },
         { updateModelContext: { text: {} } },
         { autoResize: true },
     );
@@ -516,9 +494,7 @@ export function bootstrapApp(): void {
 
     let pendingCachedPayload: RenderPayload | undefined;
     let lastToolInputArgs: Record<string, unknown> | undefined;
-    // The mutation tool that produced the current tool call, if any — stamped
-    // onto the pulled payload so telemetry attributes to write_file/edit_block
-    // rather than the read_file pull that rendered it.
+    // Keep the originating mutation tool on the pulled payload.
     let lastMutationTool: 'write_file' | 'edit_block' | undefined;
     // True once the current tool call has been rendered (via the input-time pull),
     // so a late tool-result notification doesn't trigger a redundant second pull.
@@ -565,17 +541,6 @@ export function bootstrapApp(): void {
         const result = await app.requestDisplayMode({ mode });
         return typeof result.mode === 'string' ? result.mode : null;
     };
-    const filePreviewUiEvent = createUiEventTracker(
-        (name, args) => app.callServerTool({ name, arguments: args }),
-        {
-            component: 'file_preview',
-        }
-    );
-    trackUiEvent = (event, params = {}) => filePreviewUiEvent(event, {
-        tool_name: getTelemetryToolName(currentPayload ?? hostPayload),
-        ...params,
-    });
-
     app.ontoolinput = (params) => {
         const requestedPath = typeof params.arguments?.path === 'string' ? params.arguments.path : undefined;
         const readArgs = pickReadArgs(params.arguments);
@@ -641,8 +606,7 @@ export function bootstrapApp(): void {
 
         const deliver = (pulled: RenderPayload): void => {
             renderedForCurrentInput = true;
-            // The pull is always a read_file; re-stamp the originating mutation
-            // tool so telemetry attributes to write_file/edit_block.
+            // Preserve the originating mutation when a read refreshes its result.
             const p = lastMutationTool ? { ...pulled, sourceTool: lastMutationTool } : pulled;
             if (initialStateResolved) {
                 renderAndSync(getEffectiveIncomingPayload(p));

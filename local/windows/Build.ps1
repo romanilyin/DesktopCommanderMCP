@@ -6,10 +6,8 @@ $nodeDir = Split-Path -Parent $config.nodePath
 $npmCli = Join-Path $nodeDir 'node_modules/npm/bin/npm-cli.js'
 if (-not (Test-Path -LiteralPath $npmCli -PathType Leaf)) { throw "npm CLI missing: $npmCli" }
 $originalPath = $env:PATH
-$originalTelemetry = $env:DESKTOP_COMMANDER_DISABLE_TELEMETRY
 $originalNpmCache = $env:NPM_CONFIG_CACHE
 $env:PATH = "$nodeDir;$originalPath"
-$env:DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1'
 $env:NPM_CONFIG_CACHE = Join-Path (Get-RepoRoot) '.local/state/npm-cache'
 New-Item -ItemType Directory -Force -Path $env:NPM_CONFIG_CACHE | Out-Null
 Push-Location (Get-RepoRoot)
@@ -23,6 +21,5 @@ try {
 } finally {
     Pop-Location
     $env:PATH = $originalPath
-    $env:DESKTOP_COMMANDER_DISABLE_TELEMETRY = $originalTelemetry
     $env:NPM_CONFIG_CACHE = $originalNpmCache
 }

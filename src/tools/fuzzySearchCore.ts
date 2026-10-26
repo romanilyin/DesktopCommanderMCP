@@ -3,8 +3,7 @@ import { distance } from 'fastest-levenshtein';
 /**
  * Pure fuzzy-search core, kept free of app imports on purpose: it runs inside
  * the worker thread spawned by runFuzzySearchInWorker (fuzzySearch.ts), and
- * anything imported here is loaded per worker. Telemetry is returned as data
- * and captured on the main thread, which has the real client identity.
+ * anything imported here is loaded per worker.
  */
 
 export interface FuzzyMatch {
@@ -14,47 +13,9 @@ export interface FuzzyMatch {
     distance: number;
 }
 
-export interface FuzzySearchMetrics {
-    recursive: {
-        execution_time_ms: number;
-        text_length: number;
-        query_length: number;
-        result_distance: number;
-    };
-    iterative: {
-        execution_time_ms: number;
-        iterations: number;
-        segment_length: number;
-        query_length: number;
-        final_distance: number;
-    } | null;
-}
-
-// Set by iterativeReduction during a search (exactly one terminal call per
-// search) and collected by runFuzzySearch. Single-threaded per context, so a
-// module-level slot is safe.
-let lastIterativeMetrics: FuzzySearchMetrics['iterative'] = null;
-
-/**
- * Runs a full fuzzy search and returns the match together with the timing
- * metrics that used to be captured inline.
- */
-export function runFuzzySearch(text: string, query: string): { result: FuzzyMatch; metrics: FuzzySearchMetrics } {
-    const startTime = performance.now();
-    lastIterativeMetrics = null;
-    const result = recursiveFuzzyIndexOf(text, query);
-    return {
-        result,
-        metrics: {
-            recursive: {
-                execution_time_ms: performance.now() - startTime,
-                text_length: text.length,
-                query_length: query.length,
-                result_distance: result.distance
-            },
-            iterative: lastIterativeMetrics
-        }
-    };
+/** Run a full fuzzy search and return the match for the worker bridge. */
+export function runFuzzySearch(text: string, query: string): { result: FuzzyMatch } {
+    return { result: recursiveFuzzyIndexOf(text, query) };
 }
 
 /**
@@ -106,9 +67,6 @@ export function recursiveFuzzyIndexOf(text: string, query: string, start: number
  * @returns Object with start and end indices, matched value, and Levenshtein distance
  */
 function iterativeReduction(text: string, query: string, start: number, end: number, parentDistance: number): FuzzyMatch {
-    const startTime = performance.now();
-    let iterations = 0;
-
     // Seed with the measured distance of this slice. For recursive callers
     // this equals parentDistance (the parent measured exactly this slice), but
     // a top-level call on text <= 2x query length arrives with Infinity, which
@@ -125,7 +83,6 @@ function iterativeReduction(text: string, query: string, start: number, end: num
         bestStart++;
         const smallerString = text.substring(bestStart + 1, bestEnd);
         nextDistance = distance(smallerString, query);
-        iterations++;
     }
 
     // Improve end position
@@ -136,16 +93,7 @@ function iterativeReduction(text: string, query: string, start: number, end: num
         bestEnd--;
         const smallerString = text.substring(bestStart, bestEnd - 1);
         nextDistance = distance(smallerString, query);
-        iterations++;
     }
-
-    lastIterativeMetrics = {
-        execution_time_ms: performance.now() - startTime,
-        iterations: iterations,
-        segment_length: end - start,
-        query_length: query.length,
-        final_distance: bestDistance
-    };
 
     return {
         start: bestStart,

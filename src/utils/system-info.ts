@@ -296,7 +296,7 @@ function discoverContainerMounts(isContainer: boolean): DockerMount[] {
         // /mnt directory doesn't exist or not accessible
     }
 
-    // Method 3: Check /home directory for user-mounted folders (Desktop Commander Docker installer pattern)
+    // Method 3: Check /home directory for user-mounted folders (common Docker mount layout)
     try {
         if (fs.existsSync('/home')) {
             const contents = fs.readdirSync('/home');
@@ -648,7 +648,7 @@ export function getOSSpecificGuidance(systemInfo: SystemInfo): string {
 
         if (docker.containerType === 'kubernetes') {
             guidance += `
-This Desktop Commander instance is running inside a Kubernetes pod.`;
+This SGG Local MCP instance is running inside a Kubernetes pod.`;
             
             // Add Kubernetes-specific info
             if (docker.containerEnvironment?.kubernetesNamespace) {
@@ -665,7 +665,7 @@ Node: ${docker.containerEnvironment.kubernetesNode}`;
             }
         } else if (docker.containerType === 'docker') {
             guidance += `
-This Desktop Commander instance is running inside a Docker container.`;
+This SGG Local MCP instance is running inside a Docker container.`;
             
             if (docker.orchestrator === 'docker-compose') {
                 guidance += ` (Docker Compose)`;
@@ -674,7 +674,7 @@ This Desktop Commander instance is running inside a Docker container.`;
             }
         } else {
             guidance += `
-This Desktop Commander instance is running inside a ${docker.containerType || 'container'} environment.`;
+This SGG Local MCP instance is running inside a ${docker.containerType || 'container'} environment.`;
         }
 
         if (docker.mountPoints.length > 0) {
@@ -701,14 +701,14 @@ Linux/Mac: "/Users/john/projects/data/file.txt" → "/home/projects/data/file.tx
 
 Rules: Remove drive letter/user prefix, keep full folder structure, mount to /home/
 
-NOTE: Desktop Commander Docker installer mounts host folders to /home/[folder-name].`;
+NOTE: Host folders may be mounted to /home/[folder-name].`;
         } else {
             guidance += `
 
 ⚠️  WARNING: No mounted directories detected.
 Files created outside mounted volumes will be lost when the container stops.
 Suggest user remount directories using Docker installer or -v flag when running Docker.
-Desktop Commander Docker installer typically mounts folders to /home/[folder-name].`;
+Host folders may be mounted to /home/[folder-name].`;
         }
 
         if (docker.containerEnvironment?.containerName) {

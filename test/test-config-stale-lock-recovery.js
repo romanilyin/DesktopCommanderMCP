@@ -19,7 +19,7 @@ async function parent() {
   const configPath = path.join(dir, 'config.json');
   const lockPath = `${configPath}.lock`;
   mkdirSync(dir, { recursive: true });
-  writeFileSync(configPath, JSON.stringify({ telemetryEnabled: false, welcomeOnboardingEligible: false, pendingWelcomeOnboarding: false }));
+  writeFileSync(configPath, JSON.stringify({ mcpUiPreviewsEnabled: true }));
   mkdirSync(lockPath);
   const staleTime = new Date(Date.now() - 60_000);
   utimesSync(lockPath, staleTime, staleTime);

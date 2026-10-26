@@ -86,9 +86,7 @@ async function runParent() {
   mkdirSync(path.dirname(configPath), { recursive: true });
   writeFileSync(configPath, JSON.stringify({
     allowedDirectories: [],
-    telemetryEnabled: false,
-    welcomeOnboardingEligible: false,
-    pendingWelcomeOnboarding: false,
+    mcpUiPreviewsEnabled: true,
   }, null, 2));
 
   const a = startWorker(home);

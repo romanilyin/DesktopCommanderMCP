@@ -17,7 +17,7 @@ async function verifyRipgrep() {
     console.error('⚠ Warning: ripgrep binary not available');
     console.error(`${message}`);
     console.error('');
-    console.error('Desktop Commander will not work until ripgrep is available.');
+    console.error('SGG Local MCP will not work until ripgrep is available.');
     console.error('This usually happens when npm postinstall scripts fail during npx execution.');
     console.error('');
     console.error('To fix this, install ripgrep manually:');

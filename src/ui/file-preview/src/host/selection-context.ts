@@ -4,8 +4,6 @@ export function attachSelectionContext(options: {
     payload: RenderPayload;
     isMarkdownEditing: boolean;
     updateContext?: (text: string) => void;
-    trackUiEvent?: (event: string, params?: Record<string, unknown>) => void;
-    getFileExtensionForAnalytics: (filePath: string) => string;
     previousAbortController: AbortController | null;
 }): AbortController | null {
     if (options.isMarkdownEditing) {
@@ -120,11 +118,6 @@ export function attachSelectionContext(options: {
 
         options.updateContext?.(context);
         showHint(selection);
-        options.trackUiEvent?.('text_selected', {
-            file_type: options.payload.fileType,
-            file_extension: options.getFileExtensionForAnalytics(options.payload.filePath),
-            char_count: text.length,
-        });
     }, { signal: abortController.signal });
 
     return abortController;

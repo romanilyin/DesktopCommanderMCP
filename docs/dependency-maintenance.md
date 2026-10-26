@@ -2,7 +2,7 @@
 
 The September 2026 hardening updates the MCP SDK, PDF conversion dependencies, Sharp, Tiptap, Markdown and file detection packages while keeping ExcelJS 4.4.0. The supported Node floor is 22.12.0 because of Puppeteer 25; the local installer uses Node 24.21.0. The local Windows installation uses the committed lockfile with `npm ci`.
 
-`@opendocsg/pdf2md` 0.3.2 uses the newer unpdf dependency and removes the old optional canvas → node-pre-gyp → tar chain. Desktop Commander's PDF adapter accepts the new `metadata.info` shape and retains a fallback for the older flat shape. The compatibility suite checks metadata, page selection and extracted images rather than only confirming that a PDF opens.
+`@opendocsg/pdf2md` 0.3.2 uses the newer unpdf dependency and removes the old optional canvas → node-pre-gyp → tar chain. The SGG Local MCP PDF adapter accepts the new `metadata.info` shape and retains a fallback for the older flat shape. The compatibility suite checks metadata, page selection and extracted images rather than only confirming that a PDF opens.
 
 The upgraded Puppeteer browser installer removes the old proxy/FTP dependency chain. The PDF adapter normalizes its output to a Node Buffer to preserve the existing API. PDF creation must still be checked with a supported Chrome installation and with the application's browser discovery/cache behavior.
 

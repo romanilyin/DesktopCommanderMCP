@@ -16,7 +16,6 @@ interface CreateToolShellControllerOptions {
   toggleButton: HTMLButtonElement | null;
   initialExpanded: boolean;
   onToggle?: (expanded: boolean) => void;
-  onScrollAfterExpand?: () => void;
   onRender?: () => void;
 }
 
@@ -25,7 +24,6 @@ interface CreateCompactRowShellControllerOptions {
   compactRow: HTMLElement | null;
   initialExpanded: boolean;
   onToggle?: (expanded: boolean) => void;
-  onScrollAfterExpand?: () => void;
   onRender?: () => void;
 }
 
@@ -48,19 +46,13 @@ function syncShellClasses(shell: HTMLElement | null, expanded: boolean): void {
 }
 
 export function createToolShellController(options: CreateToolShellControllerOptions): ToolShellController {
-  const { shell, toggleButton, initialExpanded, onToggle, onScrollAfterExpand, onRender } = options;
+  const { shell, toggleButton, initialExpanded, onToggle, onRender } = options;
   let isExpanded = initialExpanded;
-  let scrollTrackedForCurrentExpand = false;
-  const shouldTrackScroll = typeof onScrollAfterExpand === 'function';
 
   const applyExpandedState = (nextExpanded: boolean): void => {
-    const wasExpanded = isExpanded;
     isExpanded = nextExpanded;
     syncShellClasses(shell, isExpanded);
     syncExpandButton(toggleButton, isExpanded);
-    if (!wasExpanded && isExpanded) {
-      scrollTrackedForCurrentExpand = false;
-    }
   };
 
   const toggle = (): void => {
@@ -69,24 +61,8 @@ export function createToolShellController(options: CreateToolShellControllerOpti
     onRender?.();
   };
 
-  const handleScroll = (event?: Event): void => {
-    if (!isExpanded || scrollTrackedForCurrentExpand) {
-      return;
-    }
-    const targetNode = event?.target instanceof Node ? event.target : null;
-    if (targetNode && shell && !shell.contains(targetNode)) {
-      return;
-    }
-    scrollTrackedForCurrentExpand = true;
-    onScrollAfterExpand?.();
-  };
-
   applyExpandedState(isExpanded);
   toggleButton?.addEventListener('click', toggle);
-  if (shouldTrackScroll) {
-    shell?.addEventListener('scroll', handleScroll, { passive: true });
-    document.addEventListener('scroll', handleScroll, { passive: true, capture: true });
-  }
 
   return {
     getExpanded: () => isExpanded,
@@ -94,16 +70,12 @@ export function createToolShellController(options: CreateToolShellControllerOpti
     toggle,
     dispose: () => {
       toggleButton?.removeEventListener('click', toggle);
-      if (shouldTrackScroll) {
-        shell?.removeEventListener('scroll', handleScroll);
-        document.removeEventListener('scroll', handleScroll, true);
-      }
     },
   };
 }
 
 export function createCompactRowShellController(options: CreateCompactRowShellControllerOptions): ToolShellController {
-  const { shell, compactRow, initialExpanded, onToggle, onScrollAfterExpand, onRender } = options;
+  const { shell, compactRow, initialExpanded, onToggle, onRender } = options;
 
   const controller = createToolShellController({
     shell,
@@ -113,7 +85,6 @@ export function createCompactRowShellController(options: CreateCompactRowShellCo
       compactRow?.setAttribute('aria-expanded', String(expanded));
       onToggle?.(expanded);
     },
-    onScrollAfterExpand,
     onRender,
   });
 

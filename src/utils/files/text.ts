@@ -120,7 +120,7 @@ export class TextFileHandler implements FileHandler {
 
     /**
      * Count lines in text content
-     * Made static and public for use by other modules (e.g., writeFile telemetry in filesystem.ts)
+     * Made static and public for line counting by file-processing modules
      */
     static countLines(content: string): number {
         if (content === '') return 0;

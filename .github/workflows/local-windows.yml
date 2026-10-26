@@ -18,7 +18,6 @@ jobs:
       matrix:
         node: ['22.12.0', '24.21.0']
     env:
-      DESKTOP_COMMANDER_DISABLE_TELEMETRY: '1'
       PUPPETEER_SKIP_DOWNLOAD: 'true'
     steps:
       - uses: actions/checkout@v4

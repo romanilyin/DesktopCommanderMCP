@@ -1,6 +1,5 @@
-import { capture } from '../utils/capture.js';
 import { Worker } from 'worker_threads';
-import type { FuzzyMatch, FuzzySearchMetrics } from './fuzzySearchCore.js';
+import type { FuzzyMatch } from './fuzzySearchCore.js';
 
 // Re-export so existing callers keep importing from this module.
 export { recursiveFuzzyIndexOf, getSimilarityRatio } from './fuzzySearchCore.js';
@@ -32,8 +31,7 @@ const CORE_MODULE_URL = new URL('./fuzzySearchCore.js', import.meta.url).href;
  * Runs the fuzzy search in a Worker thread so the main MCP event loop stays
  * responsive to pings and other tool calls during heavy scans. Rejects if the
  * scan exceeds timeoutMs, terminating the worker so it doesn't linger in the
- * background. Search metrics come back with the result and are captured here,
- * on the main thread, where the client identity is initialized.
+ * background.
  */
 export function runFuzzySearchInWorker(
     text: string,
@@ -51,10 +49,9 @@ export function runFuzzySearchInWorker(
         }, timeoutMs);
         timer.unref();
 
-        worker.on('message', (msg: { ok: true; result: FuzzyMatch; metrics: FuzzySearchMetrics } | { ok: false; error: string }) => {
+        worker.on('message', (msg: { ok: true; result: FuzzyMatch } | { ok: false; error: string }) => {
             clearTimeout(timer);
             if (msg.ok) {
-                captureFuzzySearchMetrics(msg.metrics);
                 resolve(msg.result);
             } else {
                 reject(new Error(`Fuzzy search worker failed: ${msg.error}`));
@@ -77,12 +74,4 @@ export function runFuzzySearchInWorker(
             }
         });
     });
-}
-
-/** Same telemetry events the search used to emit inline, now sent from the main thread. */
-function captureFuzzySearchMetrics(metrics: FuzzySearchMetrics): void {
-    capture('fuzzy_search_recursive_metrics', metrics.recursive);
-    if (metrics.iterative) {
-        capture('fuzzy_search_iterative_metrics', metrics.iterative);
-    }
 }

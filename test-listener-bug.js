@@ -24,7 +24,7 @@ async function runTest() {
 
   // Start the MCP server
   const serverPath = path.join(__dirname, 'dist', 'index.js');
-  const server = spawn('node', [serverPath, '--no-onboarding'], {
+  const server = spawn('node', [serverPath], {
     stdio: ['pipe', 'pipe', 'pipe']
   });
 

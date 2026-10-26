@@ -10,8 +10,6 @@ export function attachPanelActions(options: {
     htmlMode: HtmlPreviewMode;
     getIsExpanded: () => boolean;
     callTool?: (name: string, args: Record<string, unknown>) => Promise<unknown | undefined>;
-    trackUiEvent?: (event: string, params?: Record<string, unknown>) => void;
-    getFileExtensionForAnalytics: (filePath: string) => string;
     buildOpenInFolderCommand: (filePath: string) => string | undefined;
     buildOpenInEditorCommand: (filePath: string) => string | undefined;
     render: (payload?: RenderPayload, htmlMode?: HtmlPreviewMode, expandedState?: boolean) => void;
@@ -73,13 +71,8 @@ export function attachPanelActions(options: {
         }
     };
 
-    const fileExtension = options.getFileExtensionForAnalytics(options.payload.filePath);
     const copyButton = queryById<HTMLButtonElement>('copy-source');
     copyButton?.addEventListener('click', async () => {
-        options.trackUiEvent?.('copy_clicked', {
-            file_type: options.payload.fileType,
-            file_extension: fileExtension,
-        });
 
         const copied = await copyTextData(stripReadStatusLine(options.payload.content));
         setButtonState(copyButton, copied ? 'Copied!' : 'Copy failed', 'Copy', 1500);
@@ -102,10 +95,6 @@ export function attachPanelActions(options: {
     const toggleButton = queryById<HTMLButtonElement>('toggle-html-mode');
     toggleButton?.addEventListener('click', () => {
         const nextMode: HtmlPreviewMode = options.htmlMode === 'rendered' ? 'source' : 'rendered';
-        options.trackUiEvent?.('html_view_toggled', {
-            file_type: options.payload.fileType,
-            file_extension: fileExtension,
-        });
         options.render(options.payload, nextMode, options.getIsExpanded());
     });
 
@@ -116,10 +105,6 @@ export function attachPanelActions(options: {
             openFolderButton.disabled = true;
         } else {
             openFolderButton.addEventListener('click', async () => {
-                options.trackUiEvent?.('open_in_folder', {
-                    file_type: options.payload.fileType,
-                    file_extension: fileExtension,
-                });
                 try {
                     await options.callTool?.('start_process', { command, timeout_ms: 12000, origin: 'ui' });
                 } catch {
@@ -136,10 +121,6 @@ export function attachPanelActions(options: {
             openEditorButton.disabled = true;
         } else {
             openEditorButton.addEventListener('click', async () => {
-                options.trackUiEvent?.('open_in_editor', {
-                    file_type: options.payload.fileType,
-                    file_extension: fileExtension,
-                });
                 try {
                     await options.callTool?.('start_process', { command, timeout_ms: 12000, origin: 'ui' });
                 } catch {
@@ -165,11 +146,6 @@ export function attachPanelActions(options: {
         const originalText = button.textContent;
         button.textContent = 'Loading…';
         button.disabled = true;
-
-        options.trackUiEvent?.(direction === 'before' ? 'load_lines_before' : 'load_lines_after', {
-            file_type: options.payload.fileType,
-            file_extension: fileExtension,
-        });
 
         try {
             const readArgs = direction === 'before'

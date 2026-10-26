@@ -7,7 +7,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tempRoot = path.join(repo, '.local', 'tmp');
@@ -109,7 +108,7 @@ async function main() {
       assert.equal((await sharp(resized).metadata()).width, 1200);
       const doc = await PDFDocument.create();
       doc.setTitle('Compatibility title');
-      doc.setAuthor('Desktop Commander test');
+      doc.setAuthor('SGG Local MCP test');
       const font = await doc.embedFont(StandardFonts.Helvetica);
       const first = doc.addPage([500, 500]);
       first.drawText('First page compatibility marker', { x: 35, y: 440, font, size: 14, color: rgb(0, 0, 0) });
@@ -124,7 +123,7 @@ async function main() {
       const all = await parsePdfToMarkdown(pdfFile);
       assert.equal(all.metadata.totalPages, 2);
       assert.equal(all.metadata.title, 'Compatibility title');
-      assert.equal(all.metadata.author, 'Desktop Commander test');
+      assert.equal(all.metadata.author, 'SGG Local MCP test');
       assert.match(all.pages[0].text, /First page compatibility marker/);
       assert.match(all.pages[1].text, /Second page compatibility marker/);
       const selected = await parsePdfToMarkdown(pdfFile, { offset: 1, length: 1 });

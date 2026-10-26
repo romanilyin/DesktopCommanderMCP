@@ -4,16 +4,8 @@
 // submitted. See src/bootstrap.ts for why import order matters.
 import './bootstrap.js';
 import { FilteredStdioServerTransport } from './custom-stdio.js';
-import { server, flushDeferredMessages } from './server.js';
-import { commandManager } from './command-manager.js';
 import { configManager } from './config-manager.js';
-import { featureFlagManager } from './utils/feature-flags.js';
-import { runSetup } from './npm-scripts/setup.js';
-import { runUninstall } from './npm-scripts/uninstall.js';
-import { capture } from './utils/capture.js';
-import { logToStderr, logger } from './utils/logger.js';
-import { runRemote } from './npm-scripts/remote.js';
-import { ensureChromeAvailable } from './tools/pdf/markdown.js';
+import { logger } from './utils/logger.js';
 
 // Store messages to defer until after initialization
 const deferredMessages: Array<{ level: string, message: string }> = [];
@@ -22,34 +14,18 @@ function deferLog(level: string, message: string) {
 }
 
 async function runServer() {
+  const command = process.argv[2];
+  if (command === 'remote' || command === 'setup' || command === 'remove') {
+    process.stderr.write(
+      `SGG Local MCP: "${command}" is a retired command and is no longer supported. ` +
+      'For local setup, use local/windows/Install.ps1; see README.md for setup and removal instructions.\n'
+    );
+    process.exit(2);
+  }
+
   try {
-    // Check if first argument is "setup"
-    if (process.argv[2] === 'setup') {
-      await runSetup();
-      return;
-    }
-
-    // Check if first argument is "remove"
-    if (process.argv[2] === 'remove') {
-      await runUninstall();
-      return;
-    }
-
-    // Check if first argument is "remote"
-    if (process.argv[2] === 'remote') {
-      await runRemote();
-      return;
-    }
-
-    // Parse command line arguments for onboarding control
-    const DISABLE_ONBOARDING = process.argv.includes('--no-onboarding');
-    if (DISABLE_ONBOARDING) {
-      logToStderr('info', 'Onboarding disabled via --no-onboarding flag');
-    }
-
-    // Set global flag for onboarding control
-    (global as any).disableOnboarding = DISABLE_ONBOARDING;
-
+    // Retired commands exit before loading tool history or probing the system.
+    const { server, flushDeferredMessages } = await import('./server.js');
     // Create transport FIRST so all logging gets properly buffered
     // This must happen before any code that might use logger.*
     const transport = new FilteredStdioServerTransport();
@@ -61,10 +37,6 @@ async function runServer() {
       deferLog('info', 'Loading configuration...');
       await configManager.loadConfig();
       deferLog('info', 'Configuration loaded successfully');
-
-      // Initialize feature flags (non-blocking)
-      deferLog('info', 'Initializing feature flags...');
-      await featureFlagManager.initialize();
     } catch (configError) {
       deferLog('error', `Failed to load configuration: ${configError instanceof Error ? configError.message : String(configError)}`);
       if (configError instanceof Error && configError.stack) {
@@ -75,7 +47,7 @@ async function runServer() {
     }
 
     // Handle uncaught exceptions
-    process.on('uncaughtException', async (error) => {
+    process.on('uncaughtException', (error) => {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
       // If this is a JSON parsing error, log it to stderr but don't crash
@@ -84,16 +56,12 @@ async function runServer() {
         return; // Don't exit on JSON parsing errors
       }
 
-      capture('run_server_uncaught_exception', {
-        error: errorMessage
-      });
-
       logger.error(`Uncaught exception: ${errorMessage}`);
       process.exit(1);
     });
 
     // Handle unhandled rejections
-    process.on('unhandledRejection', async (reason) => {
+    process.on('unhandledRejection', (reason) => {
       const errorMessage = reason instanceof Error ? reason.message : String(reason);
 
       // If this is a JSON parsing error, log it to stderr but don't crash
@@ -102,15 +70,9 @@ async function runServer() {
         return; // Don't exit on JSON parsing errors
       }
 
-      capture('run_server_unhandled_rejection', {
-        error: errorMessage
-      });
-
       logger.error(`Unhandled rejection: ${errorMessage}`);
       process.exit(1);
     });
-
-    capture('run_server_start');
 
     deferLog('info', 'Connecting server...');
 
@@ -131,8 +93,6 @@ async function runServer() {
       transport.sendLog('info', 'Server connected successfully');
       transport.sendLog('info', 'MCP fully initialized, all startup messages sent');
 
-      // Preemptively check/download Chrome for PDF generation (runs in background)
-      ensureChromeAvailable();
     };
 
     await server.connect(transport);
@@ -155,14 +115,11 @@ async function runServer() {
     };
     process.stdout.write(JSON.stringify(errorNotification) + '\n');
 
-    capture('run_server_failed_start_error', {
-      error: errorMessage
-    });
     process.exit(1);
   }
 }
 
-runServer().catch(async (error) => {
+runServer().catch((error) => {
   const errorMessage = error instanceof Error ? error.message : String(error);
   console.error(`RUNTIME ERROR: ${errorMessage}`);
   console.error(error instanceof Error && error.stack ? error.stack : 'No stack trace available');
@@ -172,9 +129,5 @@ runServer().catch(async (error) => {
     message: `Fatal error running server: ${errorMessage}`
   }) + '\n');
 
-
-  capture('run_server_fatal_error', {
-    error: errorMessage
-  });
   process.exit(1);
 });

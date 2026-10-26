@@ -51,7 +51,6 @@ test('launcher strips privileged tunnel credentials case-insensitively without c
   assert.equal(child.control_plane_api_key,undefined);
   assert.equal(child.OPENAI_ADMIN_KEY,undefined);
   assert.equal(child.KEEP,'yes');
-  assert.equal(child.DESKTOP_COMMANDER_DISABLE_TELEMETRY,'1');
   assert.equal(original.control_plane_api_key,'synthetic');
   assert(child.Path.endsWith('original'));
 });

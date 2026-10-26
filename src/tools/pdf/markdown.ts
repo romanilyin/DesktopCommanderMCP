@@ -18,7 +18,7 @@ interface CachedPuppeteerChrome {
 }
 
 /**
- * Get Desktop Commander's private Puppeteer cache directory.
+ * Get SGG Local MCP's private Puppeteer cache directory.
  */
 function getPuppeteerCacheDir(): string {
     return join(dirname(CONFIG_FILE), 'puppeteer-cache');
@@ -245,18 +245,6 @@ async function getChromePath(): Promise<string | undefined> {
     const result = await chromeCheckPromise;
     chromeCheckPromise = null;
     return result;
-}
-
-/**
- * Preemptively ensure Chrome is available for PDF generation.
- * Call this at server startup to trigger download in background if needed.
- * Returns immediately, download happens in background.
- */
-export function ensureChromeAvailable(): void {
-    // Don't await - let it run in background
-    getChromePath().catch((error) => {
-        console.error('Background Chrome check failed:', error);
-    });
 }
 
 async function loadPdfToBuffer(source: string): Promise<Buffer | ArrayBuffer> {

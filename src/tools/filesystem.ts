@@ -4,7 +4,6 @@ import os from 'os';
 import fetch from 'cross-fetch';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { capture } from '../utils/capture.js';
 import { withTimeout, runWithAbortableTimeout } from '../utils/withTimeout.js';
 import { configManager } from '../config-manager.js';
 import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
@@ -45,15 +44,6 @@ async function getMimeTypeInfo(filePath: string): Promise<{ mimeType: string; is
     const isImage = isImageFile(mimeType);
     const isPdf = isPdfFile(mimeType);
     return { mimeType, isImage, isPdf };
-}
-
-/**
- * Get file extension for telemetry purposes
- * @param filePath Path to the file
- * @returns Lowercase file extension
- */
-function getFileExtension(filePath: string): string {
-    return path.extname(filePath).toLowerCase();
 }
 
 /**
@@ -248,10 +238,6 @@ export async function validatePath(requestedPath: string): Promise<string> {
             const err = error as NodeJS.ErrnoException;
             // Only throw for non-ENOENT errors (e.g., permission denied, I/O errors)
             if (!err.code || err.code !== 'ENOENT') {
-                capture('server_path_realpath_error', {
-                    error: err.message,
-                    path: absoluteOriginal
-                });
                 throw new Error(`Failed to resolve symlink for path: ${absoluteOriginal}. Error: ${err.message}`);
             }
 
@@ -290,11 +276,6 @@ export async function validatePath(requestedPath: string): Promise<string> {
 
         // Check if path is allowed
         if (!(await isPathAllowed(pathForNextCheck))) {
-            capture('server_path_validation_error', {
-                error: 'Path not allowed',
-                allowedDirsCount: (await getAllowedDirs()).length
-            });
-
             throw new Error(`Path not allowed: ${requestedPath}. Must be within one of these directories: ${(await getAllowedDirs()).join(', ')}`);
         }
 
@@ -324,16 +305,11 @@ export async function validatePath(requestedPath: string): Promise<string> {
     const result = await withTimeout(
         validationOperation(),
         FILE_OPERATION_TIMEOUTS.PATH_VALIDATION,
-        `Path validation operation`, // Generic name for telemetry
+        `Path validation operation`,
         null
     );
 
     if (result === null) {
-        // Keep original path in error for AI but a generic message for telemetry
-        capture('server_path_validation_timeout', {
-            timeoutMs: FILE_OPERATION_TIMEOUTS.PATH_VALIDATION
-        });
-
         throw new Error(`Path validation failed for path: ${requestedPath}`);
     }
 
@@ -448,9 +424,6 @@ export async function readFileFromDisk(
 
     const validPath = await validatePath(filePath);
 
-    // Get file extension for telemetry
-    const fileExtension = getFileExtension(validPath);
-
     // Check if path is a directory — return listing instead of EISDIR error
     try {
         const stats = await fs.stat(validPath);
@@ -483,24 +456,6 @@ export async function readFileFromDisk(
             throw error;
         }
         // stat() failed (e.g. ENOENT) — fall through to the read path below
-    }
-
-    // Check file size before attempting to read
-    try {
-        const stats = await fs.stat(validPath);
-
-        // Capture file extension in telemetry without capturing the file path
-        capture('server_read_file', {
-            fileExtension: fileExtension,
-            offset: offset,
-            length: length,
-            fileSize: stats.size
-        });
-    } catch (error) {
-        console.error('error catch ' + error);
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        capture('server_read_file_error', { error: errorMessage, fileExtension: fileExtension });
-        // If we can't stat the file, continue anyway and let the read operation handle errors
     }
 
     // Read under an abortable timeout so a hung/stalled read is cancelled
@@ -598,9 +553,9 @@ export async function readFileInternal(filePath: string, offset: number = 0, len
 
     const validPath = await validatePath(filePath);
 
-    // Get file extension and MIME type
-    const fileExtension = getFileExtension(validPath);
-    const { mimeType, isImage } = await getMimeTypeInfo(validPath);
+    // Reject image content for internal text-only operations.
+
+    const { isImage } = await getMimeTypeInfo(validPath);
 
     if (isImage) {
         throw new Error('Cannot read image files as text for internal operations');
@@ -637,21 +592,6 @@ export async function readFileInternal(filePath: string, offset: number = 0, len
 
 export async function writeFile(filePath: string, content: string, mode: 'rewrite' | 'append' = 'rewrite'): Promise<void> {
     const validPath = await validatePath(filePath);
-
-    // Get file extension for telemetry
-    const fileExtension = getFileExtension(validPath);
-
-    // Calculate content metrics
-    const contentBytes = Buffer.from(content).length;
-    const lineCount = TextFileHandler.countLines(content);
-
-    // Capture file extension and operation details in telemetry without capturing the file path
-    capture('server_write_file', {
-        fileExtension: fileExtension,
-        mode: mode,
-        contentBytes: contentBytes,
-        lineCount: lineCount
-    });
 
     // Get appropriate handler for this file type (async - includes binary detection)
     const handler = await getFileHandler(validPath);
@@ -840,19 +780,9 @@ export async function searchFiles(rootPath: string, pattern: string): Promise<st
             }
         }
 
-        // Log only the count of found files, not their paths
-        capture('server_search_files_complete', {
-            resultsCount: allResults.length,
-            patternLength: pattern.length,
-            usedRipgrep: true
-        });
-
         return allResults;
     } catch (error) {
         // Fallback to original Node.js implementation if ripgrep fails
-        capture('server_search_files_ripgrep_fallback', {
-            error: error instanceof Error ? error.message : 'Unknown error'
-        });
 
         return await searchFilesNodeJS(rootPath, pattern);
     }
@@ -894,21 +824,8 @@ async function searchFilesNodeJS(rootPath: string, pattern: string): Promise<str
         const validPath = await validatePath(rootPath);
         await search(validPath);
 
-        // Log only the count of found files, not their paths
-        capture('server_search_files_complete', {
-            resultsCount: results.length,
-            patternLength: pattern.length,
-            usedRipgrep: false
-        });
-
         return results;
     } catch (error) {
-        // For telemetry only - sanitize error info
-        capture('server_search_files_error', {
-            errorType: error instanceof Error ? error.name : 'Unknown',
-            error: 'Error with root path',
-            isRootPathError: true
-        });
 
         // Re-throw the original error for the caller
         throw error;
@@ -994,7 +911,6 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
     return info;
 }
 
-
 /**
  * Write content to a PDF file.
  * Can create a new PDF from Markdown string, or modify an existing PDF using operations.
@@ -1010,15 +926,9 @@ export async function writePdf(
     options: any = {}
 ): Promise<void> {
     const validPath = await validatePath(filePath);
-    const fileExtension = getFileExtension(validPath);
 
     if (typeof content === 'string') {
         // --- PDF CREATION MODE ---
-        capture('server_write_pdf', {
-            fileExtension: fileExtension,
-            contentLength: content.length,
-            mode: 'create'
-        });
 
         const pdfBuffer = await parseMarkdownToPdf(content, options);
         // Use outputPath if provided, otherwise overwrite input file
@@ -1040,14 +950,6 @@ export async function writePdf(
             }
             operations.push(o);
         }
-
-        capture('server_write_pdf', {
-            fileExtension: fileExtension,
-            operationCount: operations.length,
-            mode: 'modify',
-            deleteCount: operations.filter(op => op.type === 'delete').length,
-            insertCount: operations.filter(op => op.type === 'insert').length
-        });
 
         // Perform the PDF editing
         const modifiedPdfBuffer = await editPdf(validPath, operations);

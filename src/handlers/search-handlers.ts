@@ -5,7 +5,6 @@ import {
   StopSearchArgsSchema
 } from '../tools/schemas.js';
 import { ServerResult } from '../types.js';
-import { capture } from '../utils/capture.js';
 
 /**
  * Handle start_search command
@@ -70,7 +69,6 @@ export async function handleStartSearch(args: unknown): Promise<ServerResult> {
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    capture('search_session_start_error', { error: errorMessage });
     
     return {
       content: [{ type: "text", text: `Error starting search session: ${errorMessage}` }],

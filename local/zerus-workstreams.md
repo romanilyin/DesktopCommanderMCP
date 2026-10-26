@@ -1,6 +1,6 @@
 # Optional Zerus workstreams for ChatGPT Chat / Work / Codex Chat
 
-This adapter uses existing Desktop Commander `start_process`; it does not change
+This adapter uses existing SGG Local MCP `start_process`; it does not change
 or restart the MCP tunnel, add cloud credentials, or pretend to send messages to
 ChatGPT. Each conversation explicitly chooses its kind, exact conversation URL,
 workspace and `external/project/session` name. The receiver owns bounded durable
@@ -27,10 +27,10 @@ reviewed clean `romanilyin/zerus` receiver. Local profile shape:
 For `wsl-local`, `hgs`, `config_dir` and `state_dir` are absolute Linux paths;
 add exact `distribution`, `user` and absolute `wsl_executable`. No SSH or default
 distribution fallback exists. Each machine/user has its own state, profile and
-Desktop Commander tunnel. Never copy tunnel credentials or a session database
+SGG Local MCP tunnel. Never copy tunnel credentials or a session database
 onto another machine to make their identities match.
 
-Run from PowerShell 7 via Desktop Commander:
+Run from PowerShell 7 via SGG Local MCP:
 
 ```powershell
 node C:/Tools/DesktopCommanderMCP/local/zerus-workstream.mjs `
@@ -74,6 +74,6 @@ node --test local/test/zerus-workstream.test.mjs
 ```
 
 This optional script needs no MCP server restart and can be adopted independently
-of a Desktop Commander binary upgrade. It only executes the explicitly selected
+of an SGG Local MCP binary upgrade. It only executes the explicitly selected
 HGS command with literal argv; no shell interpolation, automatic task execution,
 cloud login scraping, approval automation or service management is performed.

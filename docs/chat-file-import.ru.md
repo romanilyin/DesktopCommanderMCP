@@ -27,7 +27,7 @@
 `_meta["openai/fileParams"] = ["file"]`, обязательные `download_url`, `file_id`,
 необязательные `mime_type`, `file_name`.
 
-Пример запроса в чате с подключённым **Desktop Commander Local**:
+Пример запроса в чате с подключённым **SGG Local MCP**:
 
 > Сохрани эту сгенерированную картинку на STINGER-SPB-PC через import_chat_file
 > в C:\Temp\stinger-chat-image-test.png. Используй уникальный transfer_id.

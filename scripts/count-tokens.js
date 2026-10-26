@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Count tokens consumed by Desktop Commander MCP tool definitions.
+ * Count tokens consumed by SGG Local MCP tool definitions.
  * 
  * Spawns the MCP server, queries tools/list via JSON-RPC,
  * then uses js-tiktoken (cl100k_base) to count tokens per tool.
@@ -101,7 +101,7 @@ async function main() {
   const isJson = flag === '--json';
 
   if (!isJson) {
-    console.log(`${colors.cyan}🔢 Desktop Commander MCP — Token Counter${colors.reset}`);
+    console.log(`${colors.cyan}🔢 SGG Local MCP — Token Counter${colors.reset}`);
     console.log(`${colors.dim}   Using cl100k_base tokenizer (GPT-4 / Claude approximation)${colors.reset}\n`);
 
     console.log(`${colors.dim}   Starting server and querying tools/list...${colors.reset}`);

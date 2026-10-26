@@ -60,7 +60,7 @@ async function parent() {
   const home = mkdtempSync(path.join(os.tmpdir(), 'dc-watch-'));
   const configPath = path.join(home, '.claude-server-commander', 'config.json');
   mkdirSync(path.dirname(configPath), { recursive: true });
-  writeFileSync(configPath, JSON.stringify({ telemetryEnabled: false, welcomeOnboardingEligible: false, pendingWelcomeOnboarding: false }));
+  writeFileSync(configPath, JSON.stringify({ mcpUiPreviewsEnabled: true }));
   const a = spawnWorker(home), b = spawnWorker(home);
   try {
     await Promise.all([waitFor(a, 'ready'), waitFor(b, 'ready')]);

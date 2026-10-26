@@ -217,7 +217,7 @@ async function main() {
   const overallStartTime = Date.now();
   
   try {
-    console.log(`${colors.bold}${colors.cyan}===== DESKTOP COMMANDER TEST RUNNER =====${colors.reset}`);
+    console.log(`${colors.bold}${colors.cyan}===== SGG LOCAL MCP TEST RUNNER =====${colors.reset}`);
     console.log(`${colors.blue}Starting test execution at ${new Date().toISOString()}${colors.reset}\n`);
     
     // Build the project first

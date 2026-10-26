@@ -9,7 +9,6 @@ import { resolveMarkdownLink } from './linking.js';
 import { extractMarkdownOutline } from './outline.js';
 import { getRenderedMarkdownCopyText } from './preview.js';
 import { slugifyMarkdownHeading } from './slugify.js';
-import { getFileExtensionForAnalytics } from '../payload-utils.js';
 
 export interface MarkdownControllerDependencies {
     callTool?: (name: string, args: Record<string, unknown>) => Promise<unknown | undefined>;
@@ -23,7 +22,6 @@ export interface MarkdownControllerDependencies {
     storePayloadOverride: (payload: RenderPayload) => void;
     rerender: () => void;
     updateSaveStatus: (label: string, statusClass: string) => void;
-    trackUiEvent?: (event: string, params?: Record<string, unknown>) => void;
     showConflictDialog?: (options: OpenConflictDialogOptions) => void;
 }
 
@@ -788,9 +786,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         workspaceState.notice = null;
         dependencies.rerender();
         flashSaveStatus('Reverted', 'saved', 1500);
-        dependencies.trackUiEvent?.('markdown_reverted', {
-            file_extension: getFileExtensionForAnalytics(filePath),
-        });
     }
 
     async function saveDocument(): Promise<void> {
@@ -888,10 +883,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                 }
                 return false;
             });
-            dependencies.trackUiEvent?.('markdown_saved', {
-                file_extension: getFileExtensionForAnalytics(state.filePath),
-                blocks: blocks.length,
-            });
         } catch (error) {
             state.saving = false;
             state.saveIndicator = 'idle';
@@ -934,12 +925,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                 );
                 dependencies.rerender();
                 flashSaveStatus('Saved (partial)', 'saved', 3000);
-                dependencies.trackUiEvent?.('markdown_save_partial', {
-                    file_extension: getFileExtensionForAnalytics(state.filePath),
-                    applied: appliedCount,
-                    skipped: skippedCount,
-                    total: totalCount,
-                });
             } else if (isTotalFailure && reloadedFromDisk && dependencies.showConflictDialog && freshContentForDialog !== null) {
                 // No hunks landed and disk has changed. Genuine conflict — show
                 // the modal so the user can pick keep-mine / use-disk.
@@ -948,9 +933,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                 const displayName = normalized.split('/').pop() || state.filePath;
                 state.error = null;
                 dependencies.rerender();
-                dependencies.trackUiEvent?.('markdown_save_conflict_shown', {
-                    file_extension: getFileExtensionForAnalytics(state.filePath),
-                });
                 dependencies.showConflictDialog({
                     fileName: displayName,
                     onUseDiskVersion: () => {
@@ -958,16 +940,8 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                             syncStateFromContent(state, savedFreshContent);
                             dependencies.rerender();
                         }
-                        dependencies.trackUiEvent?.('markdown_save_conflict_resolved', {
-                            file_extension: getFileExtensionForAnalytics(state.filePath),
-                            action: 'use_disk',
-                        });
                     },
                     onSaveMyChanges: () => {
-                        dependencies.trackUiEvent?.('markdown_save_conflict_resolved', {
-                            file_extension: getFileExtensionForAnalytics(state.filePath),
-                            action: 'save_mine',
-                        });
                         // Re-run saveDocument. computeEditBlocks will diff against
                         // the fresh sourceContent that keepDraft: true left in place,
                         // so hunks the user actually modified win over disk on
@@ -980,10 +954,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                             state.error = 'File changed on disk. Save again to merge your edits, or reopen to discard them.';
                             dependencies.rerender();
                         }
-                        dependencies.trackUiEvent?.('markdown_save_conflict_resolved', {
-                            file_extension: getFileExtensionForAnalytics(state.filePath),
-                            action: 'dismissed',
-                        });
                     },
                 });
             } else {
@@ -997,13 +967,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                 flashSaveStatus('Save failed', 'saving', 3000);
             }
 
-            dependencies.trackUiEvent?.('markdown_save_failed', {
-                file_extension: getFileExtensionForAnalytics(state.filePath),
-                reloaded_from_disk: reloadedFromDisk,
-                applied: appliedCount,
-                skipped: skippedCount,
-                total: totalCount,
-            });
         }
     }
 
@@ -1017,10 +980,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         state.error = null;
         dependencies.rerender();
         if (previousView !== view) {
-            dependencies.trackUiEvent?.('markdown_view_toggled', {
-                file_extension: getFileExtensionForAnalytics(payload.filePath),
-                view,
-            });
         }
         if (typeof state.editorScrollTop === 'number') {
             window.requestAnimationFrame(() => {
@@ -1036,8 +995,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         const state = getState(payload);
         const wrapper = document.querySelector('.panel-content-wrapper') as HTMLElement | null;
         const outline = state.outline;
-        const fileExtension = getFileExtensionForAnalytics(payload.filePath);
-        let editStartedFired = false;
 
         {
             const editorRoot = document.getElementById('markdown-editor-root');
@@ -1066,13 +1023,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                             ]);
                         } else {
                             state.dirtyLineRanges = [];
-                        }
-                        if (state.dirty && !editStartedFired) {
-                            editStartedFired = true;
-                            dependencies.trackUiEvent?.('markdown_edit_started', {
-                                file_extension: fileExtension,
-                                view: state.editorView,
-                            });
                         }
                         if (state.dirty) {
                             scheduleAutosave();

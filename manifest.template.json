@@ -1,25 +1,24 @@
 {
-  "$schema": "../../dist/mcpb-manifest.schema.json",
   "manifest_version": "0.3",
-  "name": "desktop-commander",
-  "display_name": "Desktop Commander",
-  "version": "{{VERSION}}",
-  "description": "Build, explore, and automate on your local machine with access to files and terminal.",
-  "long_description": "Combine local filesystem access with full terminal control to handle technical tasks through natural language. Desktop Commander empowers you to build, explore, and automate - from organizing repositories to creating complete applications:\n* **Build from scratch** - Create features and applications with simple commands\n* **Manage development environments** - Set up servers, configure systems, and handle processes\n* **Manage context and documentation** - Keep track of project details and technical specifications\n* **Explore existing codebases and projects** - Navigate and understand complex repositories\n\nThis extension bridges technical skill gaps by providing full command-line superpowers through an interface that understands your intent and handles complexity automatically.",
+  "name": "sgg-local-mcp",
+  "display_name": "SGG Local MCP",
+  "version": "0.3.0",
+  "description": "Local tools for files, processes and terminal workflows.",
+  "long_description": "Read and edit files, search projects, create documents, and manage local processes through MCP. Optional local file previews and private Secure MCP Tunnel integration are supported. Usage statistics and diagnostic logs stay on the local computer; the server contains no product analytics, remote experiments or promotional onboarding.",
   "author": {
-    "name": "Desktop Commander Team",
-    "email": "er@desktopcommander.app",
-    "url": "https://desktopcommander.app/"
+    "name": "Roman Ilyin",
+    "url": "https://github.com/romanilyin"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/wonderwhy-er/DesktopCommanderMCP.git"
+    "url": "https://github.com/romanilyin/DesktopCommanderMCP.git"
   },
-  "homepage": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
-  "documentation": "https://github.com/wonderwhy-er/DesktopCommanderMCP/blob/main/FAQ.md",
-  "support": "https://github.com/wonderwhy-er/DesktopCommanderMCP/issues",
-  "privacy_policies": ["https://legal.desktopcommander.app/privacy_desktop_commander_mcp"],
-  "icon": "icon.png",
+  "homepage": "https://github.com/romanilyin/DesktopCommanderMCP",
+  "documentation": "https://github.com/romanilyin/DesktopCommanderMCP/blob/main/README.md",
+  "support": "https://github.com/romanilyin/DesktopCommanderMCP/issues",
+  "privacy_policies": [
+    "https://github.com/romanilyin/DesktopCommanderMCP/blob/main/PRIVACY.md"
+  ],
   "server": {
     "type": "node",
     "entry_point": "dist/index.js",
@@ -29,15 +28,26 @@
         "${__dirname}/dist/index.js"
       ],
       "env": {
-        "MCP_DXT": "true",
         "NODE_ENV": "production"
       }
     }
   },
   "tools": [
     {
+      "name": "inspect_chat_file_source",
+      "description": "Inspect metadata for a selected ChatGPT file without downloading it."
+    },
+    {
+      "name": "import_chat_file",
+      "description": "Download a selected PNG/JPEG/WebP image from ChatGPT to an explicit local destination."
+    },
+    {
+      "name": "get_chat_file_transfer",
+      "description": "Read the durable status of an image transfer by its transfer ID without downloading it again."
+    },
+    {
       "name": "get_config",
-      "description": "Get the complete server configuration including blocked commands, allowed directories, file limits, telemetry settings, client info, and system information."
+      "description": "Get local server configuration, file limits, client information and system information."
     },
     {
       "name": "set_config_value",
@@ -125,24 +135,16 @@
     },
     {
       "name": "get_usage_stats",
-      "description": "Get usage statistics for debugging and analysis including tool usage and performance metrics."
+      "description": "Read local usage counters and performance metrics. These statistics are not sent to an analytics service."
     },
     {
       "name": "get_recent_tool_calls",
       "description": "Get recent tool call history with their arguments and outputs. Returns chronological list of tool calls made during this session for debugging, context recovery, and onboarding new chats."
-    },
-    {
-      "name": "give_feedback_to_desktop_commander",
-      "description": "Open feedback form in browser to provide feedback about Desktop Commander."
-    },
-    {
-      "name": "get_prompts",
-      "description": "Browse and retrieve curated Desktop Commander prompts for various tasks and workflows."
     }
   ],
   "keywords": [
     "orchestration",
-    "workflow", 
+    "workflow",
     "development",
     "prototyping",
     "terminal",
@@ -164,7 +166,7 @@
       "linux"
     ],
     "runtimes": {
-      "node": ">=18.0.0"
+      "node": ">=22.12.0"
     }
   }
 }

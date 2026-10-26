@@ -1,6 +1,5 @@
 import path from 'path';
 import {configManager} from './config-manager.js';
-import {capture} from "./utils/capture.js";
 
 class CommandManager {
 
@@ -162,10 +161,7 @@ class CommandManager {
             // Remove duplicates and return
             return [...new Set(commands)];
         } catch (error) {
-            // If anything goes wrong, log the error but return the basic command to not break execution
-            capture('server_request_error', {
-                error: 'Error extracting commands'
-            });
+            // Fall back to the basic command if parsing fails.
             const baseCmd = this.extractBaseCommand(commandString);
             return baseCmd ? [baseCmd] : [];
         }
@@ -221,7 +217,6 @@ class CommandManager {
             const baseName = path.basename(firstToken);
             return baseName.toLowerCase();
         } catch (error) {
-            capture('Error extracting base command');
             return null;
         }
     }
@@ -252,9 +247,6 @@ class CommandManager {
             return true;
         } catch (error) {
             console.error('Error validating command:', error);
-            capture('server_validate_command_error', {
-                error: error instanceof Error ? error.message : String(error)
-            });
             // Fail closed: deny the command if validation encounters an error.
             // This prevents a config read failure from bypassing all command filtering.
             return false;

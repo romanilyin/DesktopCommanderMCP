@@ -308,7 +308,7 @@ async function testBareUrlNotAutoLinked() {
   // Captured from /Users/eduardsruzga/work/best-value-ai/README.md.
   // Tiptap with `linkify: true` autolinks bare URLs and the serializer
   // emits them as `<https://...>` even when the source had no brackets.
-  const input = '🔗 **Live tool:** https://desktopcommander.app/best-value-ai/\n';
+  const input = '🔗 **Live tool:** https://example.com/tools/\n';
   const output = roundTrip(input);
   assert.strictEqual(
     output,
@@ -325,9 +325,9 @@ async function testEmojiPrefixedSoftBreaksRestored() {
   // them as one paragraph and serializes them concatenated. restoreSoftBreaks
   // currently only repairs pairs; this is a triple.
   const input =
-    '🔗 **Live tool:** desktopcommander.app/best-value-ai/\n' +
+    '🔗 **Live tool:** example.com/tools/\n' +
     '📖 **Article:** [Local LLMs Beat Cloud](https://example.com/x)\n' +
-    '🏠 **Supported by:** [Desktop Commander](https://desktopcommander.app)\n';
+    '🏠 **Supported by:** [Example project](https://example.com)\n';
   const output = roundTrip(input);
   assert.strictEqual(
     output,
@@ -446,7 +446,7 @@ async function testTrailingHardBreakWhitespacePreserved() {
 
 async function testBoldAroundInlineCodePreserved() {
   console.log('\n--- Test: **bold around `code`** preserved (skill-files batch) ---');
-  // From sentry-posthog-replay-triage.md. ProseMirror's flat-mark schema
+  // Regression fixture with nested marks. ProseMirror's flat-mark schema
   // can't represent a single bold span that wraps inline code; Tiptap
   // re-shapes the construct in non-obvious ways:
   //
@@ -494,7 +494,7 @@ async function testEscapedPipeInTableCellPreserved() {
 
 async function testListItemWithContinuationLine() {
   console.log('\n--- Test: list item with two-space indented continuation line preserved ---');
-  // From sentry-posthog-replay-triage.md. List items with continuation
+  // Regression fixture with nested marks. List items with continuation
   // prose on the next line (2-space indent) get the continuation
   // absorbed into the bullet on round-trip. The continuation line is
   // CommonMark "lazy continuation" — same paragraph as the list item,

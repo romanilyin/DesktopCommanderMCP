@@ -759,12 +759,11 @@ async function runResponsivenessProbe(client, stopProbe) {
 async function createMcpClient() {
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [path.join(PROJECT_ROOT, 'dist/index.js'), '--no-onboarding'],
+    args: [path.join(PROJECT_ROOT, 'dist/index.js')],
     cwd: PROJECT_ROOT,
     stderr: 'pipe',
     env: {
       ...process.env,
-      DESKTOP_COMMANDER_DISABLE_TELEMETRY: 'true',
     },
   });
 

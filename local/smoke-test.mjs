@@ -14,8 +14,15 @@ const temporaryRoot=path.join(root,'.local','tmp');
 await fs.mkdir(state,{recursive:true});
 await fs.mkdir(temporaryRoot,{recursive:true});
 const fixture=await fs.mkdtemp(path.join(temporaryRoot,'smoke-'));
+const isolatedHome=path.join(fixture,'profile');
+const isolatedConfigDir=path.join(isolatedHome,'.claude-server-commander');
+await fs.mkdir(isolatedConfigDir,{recursive:true});
+await fs.writeFile(path.join(isolatedConfigDir,'config.json'),JSON.stringify({
+  allowedDirectories:[fixture],defaultShell:config.powerShellPath,mcpUiPreviewsEnabled:true,
+}));
 const client=new Client({name:'local-deployment-smoke-test',version:'1.0.0'});
-const transport=new StdioClientTransport({command:config.nodePath,args:[path.join(root,'local','start-local.mjs')],stderr:'pipe'});
+const transport=new StdioClientTransport({command:config.nodePath,args:[path.join(root,'local','start-local.mjs')],
+  env:{...process.env,HOME:isolatedHome,USERPROFILE:isolatedHome},stderr:'pipe'});
 let stderr='';
 transport.stderr?.on('data',chunk=>{stderr=(stderr+chunk.toString()).slice(-32000);});
 const report={date:new Date().toISOString(),hostname:os.hostname(),transport:'local stdio (no tunnel)',checks:[]};
@@ -37,8 +44,8 @@ try {
   report.checks.push('get_config');
 
   const probe=path.join(fixture,'probe.txt');
-  const marker='DESKTOP_COMMANDER_SMOKE_ORIGINAL';
-  const edited='DESKTOP_COMMANDER_SMOKE_EDITED';
+  const marker='SGG_LOCAL_MCP_SMOKE_ORIGINAL';
+  const edited='SGG_LOCAL_MCP_SMOKE_EDITED';
   await call('write_file',{path:probe,content:marker,mode:'rewrite'});
   assert(textOf(await call('read_file',{path:probe})).includes(marker));
   await call('edit_block',{file_path:probe,old_string:marker,new_string:edited});

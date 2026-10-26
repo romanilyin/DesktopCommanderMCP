@@ -11,13 +11,11 @@ export interface ServerConfig {
   blockedCommands?: string[];
   defaultShell?: string;
   allowedDirectories?: string[];
-  telemetryEnabled?: boolean; // New field for telemetry control
-  mcpUiPreviewsEnabled?: boolean; // Explicit preference takes priority over preview experiments.
+  mcpUiPreviewsEnabled?: boolean; // False disables interactive cards; enabled by default.
   fileWriteLineLimit?: number; // Line limit for file write operations
   fileReadLineLimit?: number; // Default line limit for file read operations (changed from character-based)
-  clientId?: string; // Unique client identifier for analytics
   currentClient?: ClientInfo; // Current connected client information
-  [key: string]: any; // Allow for arbitrary configuration keys (including abTest_* keys)
+  [key: string]: any; // Preserve custom local configuration values.
 }
 
 export interface ClientInfo {
@@ -25,25 +23,45 @@ export interface ClientInfo {
   version: string;
 }
 
-export function normalizeTelemetryEnabledValue(value: unknown): unknown {
-  if (typeof value !== 'string') {
-    return value;
-  }
+// Keys from the retired upstream analytics and onboarding features. Retain
+// ordinary settings, local usage counters, and unknown user-defined keys.
+const LEGACY_UPSTREAM_KEYS = new Set([
+  'telemetryEnabled', 'clientId', 'feedbackGiven', 'onboardingState',
+  'onboarding_injection', 'pendingWelcomeOnboarding', 'welcomeOnboardingEligible',
+  'sawOnboardingPage',
+]);
+const LEGACY_USAGE_KEYS = [
+  'feedbackGiven', 'lastFeedbackPrompt', 'lastFeedbackPromptDate', 'feedbackAttempts',
+];
 
-  const normalized = value.trim().toLowerCase();
-  if (normalized === 'true') {
+function hasLegacyUpstreamState(config: ServerConfig): boolean {
+  if (Object.keys(config).some(key => LEGACY_UPSTREAM_KEYS.has(key) || key.startsWith('abTest_'))) {
     return true;
   }
-
-  if (normalized === 'false') {
-    return false;
-  }
-
-  return value;
+  const stats = config.usageStats;
+  return stats !== null && typeof stats === 'object' && !Array.isArray(stats)
+    && LEGACY_USAGE_KEYS.some(key => Object.prototype.hasOwnProperty.call(stats, key));
 }
 
-export function isTelemetryDisabledValue(value: unknown): boolean {
-  return normalizeTelemetryEnabledValue(value) === false;
+/** Idempotent migration that preserves local settings and usage statistics. */
+export function removeLegacyUpstreamState(config: ServerConfig): boolean {
+  let changed = false;
+  for (const key of Object.keys(config)) {
+    if (LEGACY_UPSTREAM_KEYS.has(key) || key.startsWith('abTest_')) {
+      delete config[key];
+      changed = true;
+    }
+  }
+  const stats = config.usageStats;
+  if (stats !== null && typeof stats === 'object' && !Array.isArray(stats)) {
+    for (const key of LEGACY_USAGE_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(stats, key)) {
+        delete stats[key];
+        changed = true;
+      }
+    }
+  }
+  return changed;
 }
 
 /**
@@ -53,7 +71,6 @@ class ConfigManager {
   private configPath: string;
   private config: ServerConfig = {};
   private initialized = false;
-  private _isFirstRun = false; // Track if this is the first run (config was just created)
   // Serializes all disk writes so concurrent saves can't corrupt config.json.
   private writeChain: Promise<void> = Promise.resolve();
   // True while a coalesced background write is already queued (see scheduleSave).
@@ -84,26 +101,30 @@ class ConfigManager {
 
       try {
         this.config = await this.readConfigFromDisk();
-        this._isFirstRun = false;
-
-        if (this.config['welcomeOnboardingEligible'] === undefined) {
-          await this.performConfigMutation((latest) => {
-            if (latest['welcomeOnboardingEligible'] === undefined) {
-              latest['welcomeOnboardingEligible'] = false;
-              latest['pendingWelcomeOnboarding'] = false;
-            }
-          });
+        if (hasLegacyUpstreamState(this.config)) {
+          try {
+            await this.performConfigMutation(latest => {
+              removeLegacyUpstreamState(latest);
+            });
+          } catch (error) {
+            // A failed migration write must not replace valid user settings with
+            // defaults. Keep using the loaded settings and retry on a later save.
+            removeLegacyUpstreamState(this.config);
+            console.error('Failed to persist legacy configuration cleanup:', error);
+          }
         }
       } catch (error: any) {
         if (error?.code !== 'ENOENT') throw error;
-        let created = false;
         await this.performConfigMutation((latest, existed) => {
-          if (!existed) {
-            Object.assign(latest, this.getDefaultConfig());
-            created = true;
-          }
+          if (!existed) Object.assign(latest, this.getDefaultConfig());
         });
-        this._isFirstRun = created;
+      }
+
+      // This cache is no longer consumed. Removing it cannot affect local tools.
+      try {
+        await fs.unlink(path.join(configDir, 'feature-flags.json'));
+      } catch (error: any) {
+        if (error?.code !== 'ENOENT') console.error('Failed to remove obsolete feature flag cache:', error);
       }
 
       this.config['version'] = VERSION;
@@ -187,11 +208,9 @@ class ConfigManager {
         return userShell;
       })(),
       allowedDirectories: [],
-      telemetryEnabled: true, // Default to opt-out approach (telemetry on by default)
+      mcpUiPreviewsEnabled: true,
       fileWriteLineLimit: 50,  // Default line limit for file write operations (changed from 100)
       fileReadLineLimit: 1000,  // Default line limit for file read operations (changed from character-based)
-      pendingWelcomeOnboarding: true, // New install flag - triggers A/B test for welcome page
-      welcomeOnboardingEligible: true // Distinguishes new installs from migrated legacy configs
     };
   }
 
@@ -214,7 +233,20 @@ class ConfigManager {
     const tempPath = `${this.configPath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
     try {
       await fs.writeFile(tempPath, JSON.stringify(config, null, 2), 'utf8');
-      await fs.rename(tempPath, this.configPath);
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await fs.rename(tempPath, this.configPath);
+          break;
+        } catch (error: any) {
+          // Windows readers and scanners can briefly hold a handle that blocks
+          // replacement. Retry the same atomic rename while keeping the lock;
+          // never delete the live config as a workaround.
+          const transient = process.platform === 'win32'
+            && ['EPERM', 'EACCES', 'EBUSY'].includes(error?.code);
+          if (!transient || attempt >= 9) throw error;
+          await new Promise(resolve => setTimeout(resolve, Math.min(10 * (attempt + 1), 50)));
+        }
+      }
     } finally {
       await fs.unlink(tempPath).catch(() => {});
     }
@@ -244,6 +276,7 @@ class ConfigManager {
         existed = false;
       }
       mutate(latest, existed);
+      removeLegacyUpstreamState(latest);
       await this.writeConfigAtomically(latest);
       this.config = { ...latest, version: VERSION };
       return latest;
@@ -306,6 +339,7 @@ class ConfigManager {
     try {
       const latest = await this.readConfigFromDisk();
       for (const mutate of this.pendingMutations) mutate(latest);
+      removeLegacyUpstreamState(latest);
       latest['version'] = VERSION;
       this.config = latest;
     } catch (error: any) {
@@ -332,16 +366,6 @@ class ConfigManager {
   /** Set a specific configuration value and wait for durable persistence. */
   async setValue(key: string, value: any): Promise<void> {
     await this.init();
-    if (key === 'telemetryEnabled') value = normalizeTelemetryEnabledValue(value);
-
-    if (key === 'telemetryEnabled' && isTelemetryDisabledValue(value)) {
-      const currentValue: unknown = this.config[key];
-      if (!isTelemetryDisabledValue(currentValue)) {
-        const { capture } = await import('./utils/capture.js');
-        await capture('server_telemetry_opt_out', { reason: 'user_disabled', prev_value: currentValue });
-      }
-    }
-
     const nextValue = value;
     const write = this.writeChain.then(() => this.performConfigMutation((latest) => {
       latest[key] = nextValue;
@@ -376,7 +400,7 @@ class ConfigManager {
   /**
    * Atomically update one value without blocking the caller on persistence.
    * The updater is replayed against the latest disk value under the lock, which
-   * makes counter-style updates safe across multiple Desktop Commander processes.
+   * makes counter-style updates safe across multiple SGG Local MCP processes.
    */
   async updateValueNonBlocking(key: string, updater: (current: any) => any): Promise<any> {
     await this.init();
@@ -406,21 +430,6 @@ class ConfigManager {
     }));
     this.writeChain = write.then(() => {}, () => {});
     return { ...(await write) };
-  }
-
-  /**
-   * Check if this is the first run (config file was just created)
-   */
-  isFirstRun(): boolean {
-    return this._isFirstRun;
-  }
-
-  /**
-   * Get or create a persistent client ID for analytics and A/B tests
-   */
-  async getOrCreateClientId(): Promise<string> {
-    const { randomUUID } = await import('crypto');
-    return await this.updateValue('clientId', (current) => current || randomUUID());
   }
 }
 

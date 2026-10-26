@@ -1,47 +1,39 @@
 {
-  "name": "@wonderwhy-er/desktop-commander",
-  "version": "0.2.51",
-  "description": "MCP server for terminal operations and file editing",
-  "mcpName": "io.github.wonderwhy-er/desktop-commander",
+  "name": "@romanilyin/sgg-local-mcp",
+  "version": "0.3.0",
+  "description": "Local MCP tools for files, processes and PowerShell, maintained by Roman Ilyin.",
+  "mcpName": "io.github.romanilyin/sgg-local-mcp",
   "license": "MIT",
-  "author": "Eduards Ruzga",
-  "homepage": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
+  "author": "Roman Ilyin",
+  "homepage": "https://github.com/romanilyin/DesktopCommanderMCP",
   "repository": {
     "type": "git",
-    "url": "https://github.com/wonderwhy-er/DesktopCommanderMCP.git"
+    "url": "https://github.com/romanilyin/DesktopCommanderMCP.git"
   },
-  "bugs": "https://github.com/wonderwhy-er/DesktopCommanderMCP/issues",
+  "bugs": "https://github.com/romanilyin/DesktopCommanderMCP/issues",
   "type": "module",
   "engines": {
     "node": ">=22.12.0"
   },
   "bin": {
-    "desktop-commander": "dist/index.js",
-    "setup": "dist/setup-claude-server.js",
-    "remove": "dist/uninstall-claude-server.js"
+    "sgg-local-mcp": "dist/index.js",
+    "desktop-commander": "dist/index.js"
   },
   "files": [
     "dist",
-    "logo.png",
-    "testemonials"
+    "LICENSE",
+    "PRIVACY.md",
+    "README.md"
   ],
   "scripts": {
-    "postinstall": "node dist/track-installation.js && node dist/npm-scripts/verify-ripgrep.js || node -e \"process.exit(0)\"",
-    "open-chat": "open -n /Applications/Claude.app",
-    "device:install": "cd src/remote-device && npm install",
-    "device:start": "tsx src/remote-device/device.ts",
-    "device:start:dev": "nodemon --watch src/remote-device --exec tsx src/remote-device/device.ts",
     "sync-version": "node scripts/sync-version.js",
     "bump": "node scripts/sync-version.js --bump",
     "bump:minor": "node scripts/sync-version.js --bump --minor",
     "bump:major": "node scripts/sync-version.js --bump --major",
-    "build": "tsc && shx cp setup-claude-server.js uninstall-claude-server.js track-installation.js dist/ && shx chmod +x dist/*.js && shx mkdir -p dist/data && shx cp src/data/onboarding-prompts.json dist/data/ && shx mkdir -p dist/remote-device/scripts && shx cp src/remote-device/scripts/blocking-offline-update.js dist/remote-device/scripts/ && node scripts/build-ui-runtime.cjs",
+    "build": "npm run clean && tsc && shx chmod +x dist/index.js && node scripts/build-ui-runtime.cjs",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
     "start:debug": "node --inspect-brk=9229 dist/index.js",
-    "setup": "npm install --include=dev && npm run build && node setup-claude-server.js",
-    "setup:debug": "npm install && npm run build && node setup-claude-server.js --debug",
-    "remove": "npm install && npm run build && node uninstall-claude-server.js",
     "prepare": "npm run build",
     "clean": "shx rm -rf dist",
     "test": "npm run build && node test/run-all-tests.js",
@@ -54,21 +46,13 @@
     "unlink:local": "npm unlink",
     "inspector": "npx @modelcontextprotocol/inspector dist/index.js",
     "build:mcpb": "node scripts/build-mcpb.cjs",
-    "release": "node scripts/publish-release.cjs",
-    "release:minor": "node scripts/publish-release.cjs --minor",
-    "release:major": "node scripts/publish-release.cjs --major",
-    "release:dry": "node scripts/publish-release.cjs --dry-run",
-    "release:rehearsal": "node scripts/publish-release.cjs --rehearsal",
-    "release:alpha": "node scripts/publish-release.cjs --alpha",
     "logs:view": "npm run build && node scripts/view-fuzzy-logs.js",
     "logs:analyze": "npm run build && node scripts/analyze-fuzzy-logs.js",
     "logs:clear": "npm run build && node scripts/clear-fuzzy-logs.js",
     "logs:export": "npm run build && node scripts/export-fuzzy-logs.js",
     "count-tokens": "npm run build && node scripts/count-tokens.js",
-    "count-tokens:json": "npm run build && node scripts/count-tokens.js --json"
-  },
-  "publishConfig": {
-    "access": "public"
+    "count-tokens:json": "npm run build && node scripts/count-tokens.js --json",
+    "verify:ripgrep": "node dist/npm-scripts/verify-ripgrep.js"
   },
   "keywords": [
     "mcp",
@@ -92,7 +76,6 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@opendocsg/pdf2md": "^0.3.2",
-    "@supabase/supabase-js": "^2.89.0",
     "@tiptap/core": "^3.31.3",
     "@tiptap/extension-image": "^3.31.3",
     "@tiptap/extension-table": "^3.31.3",
@@ -111,7 +94,6 @@
     "isbinaryfile": "^5.0.4",
     "markdown-it": "^14.3.3",
     "md-to-pdf": "^5.2.5",
-    "open": "^10.2.0",
     "pdf-lib": "^1.17.1",
     "pizzip": "^3.2.0",
     "proper-lockfile": "^4.1.2",
@@ -124,25 +106,18 @@
     "unpdf": "^1.4.0",
     "zod": "^4.6.7"
   },
-  "optionalDependencies": {
-    "caffeinate": "^1.0.1"
-  },
   "devDependencies": {
     "@modelcontextprotocol/ext-apps": "^1.0.1",
     "@types/node": "^20.17.24",
     "@types/proper-lockfile": "^4.1.4",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
-    "commander": "^13.1.0",
     "esbuild": "^0.27.2",
     "ignore": "^7.0.5",
     "js-tiktoken": "^1.0.21",
     "jsdom": "^24.1.3",
     "jszip": "^3.10.1",
-    "nodemon": "^3.0.2",
     "shx": "^0.3.4",
-    "ts-node": "^10.9.2",
-    "tsx": "^4.21.0",
     "typescript": "^5.3.3"
   },
   "overrides": {
@@ -152,5 +127,6 @@
     "external-editor": {
       "tmp": "0.2.7"
     }
-  }
+  },
+  "private": true
 }

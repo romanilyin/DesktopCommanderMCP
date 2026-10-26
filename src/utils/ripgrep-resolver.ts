@@ -74,7 +74,7 @@ export async function getRipgrepPath(): Promise<string> {
 
   // No ripgrep found - provide helpful error message
   throw new Error(
-    'ripgrep binary not found. Desktop Commander requires ripgrep to perform searches. ' +
+    'ripgrep binary not found. SGG Local MCP requires ripgrep to perform searches. ' +
     'Please install ripgrep:\n' +
     '  macOS: brew install ripgrep\n' +
     '  Linux: See https://github.com/BurntSushi/ripgrep#installation\n' +

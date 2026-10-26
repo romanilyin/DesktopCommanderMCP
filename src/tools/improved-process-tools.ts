@@ -1,7 +1,6 @@
 import { terminalManager, MAX_BUFFERED_OUTPUT_CHARS } from '../terminal-manager.js';
 import { commandManager } from '../command-manager.js';
 import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProcessArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
-import { capture } from "../utils/capture.js";
 import { ServerResult } from '../types.js';
 import { analyzeProcessState, cleanProcessOutput, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
 import * as os from 'os';
@@ -98,23 +97,10 @@ async function executeNodeCode(code: string, timeout_ms: number = 30000): Promis
 export async function startProcess(args: unknown): Promise<ServerResult> {
   const parsed = StartProcessArgsSchema.safeParse(args);
   if (!parsed.success) {
-    capture('server_start_process_failed');
     return {
       content: [{ type: "text", text: `Error: Invalid arguments for start_process: ${parsed.error}` }],
       isError: true,
     };
-  }
-
-  try {
-    const commands = commandManager.extractCommands(parsed.data.command).join(', ');
-    capture('server_start_process', {
-      command: commandManager.getBaseCommand(parsed.data.command),
-      commands: commands
-    });
-  } catch (error) {
-    capture('server_start_process', {
-      command: commandManager.getBaseCommand(parsed.data.command)
-    });
   }
 
   const isAllowed = await commandManager.validateCommand(parsed.data.command);
@@ -260,7 +246,7 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
     verbose_timing = false 
   } = parsed.data;
 
-  // Timing telemetry
+  // Local timing diagnostics
   const startTime = Date.now();
 
   // For active sessions with no new output yet, optionally wait for output
@@ -388,9 +374,6 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
 export async function interactWithProcess(args: unknown): Promise<ServerResult> {
   const parsed = InteractWithProcessArgsSchema.safeParse(args);
   if (!parsed.success) {
-    capture('server_interact_with_process_failed', {
-      error: 'Invalid arguments'
-    });
     return {
       content: [{ type: "text", text: `Error: Invalid arguments for interact_with_process: ${parsed.error}` }],
       isError: true,
@@ -412,10 +395,6 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
   // Check if this is a virtual Node session (node:local)
   if (virtualNodeSessions.has(pid)) {
     const session = virtualNodeSessions.get(pid)!;
-    capture('server_interact_with_process_node_fallback', {
-      pid: pid,
-      inputLength: input.length
-    });
 
     // Execute code via temp file approach
     // Respect per-call timeout if provided, otherwise use session default
@@ -423,7 +402,7 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
     return executeNodeCode(input, effectiveTimeout);
   }
 
-  // Timing telemetry
+  // Local timing diagnostics
   const startTime = Date.now();
   let firstOutputTime: number | undefined;
   let lastOutputTime: number | undefined;
@@ -431,10 +410,6 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
   let exitReason: 'early_exit_quick_pattern' | 'early_exit_periodic_check' | 'process_finished' | 'timeout' | 'no_wait' = 'timeout';
 
   try {
-    capture('server_interact_with_process', {
-      pid: pid,
-      inputLength: input.length
-    });
 
     // Capture output snapshot BEFORE sending input
     // This handles REPLs where output is appended to the prompt line
@@ -645,9 +620,6 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
     
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    capture('server_interact_with_process_error', {
-      error: errorMessage
-    });
     return {
       content: [{ type: "text", text: `Error interacting with process: ${errorMessage}` }],
       isError: true,

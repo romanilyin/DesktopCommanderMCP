@@ -17,13 +17,11 @@ test('text mode removes UI metadata while preserving tools and readable results,
     const configDir = path.join(dir, '.claude-server-commander');
     await fs.mkdir(configDir);
     await fs.writeFile(path.join(configDir, 'config.json'), JSON.stringify({
-      telemetryEnabled: false, welcomeOnboardingEligible: false, pendingWelcomeOnboarding: false,
       mcpUiPreviewsEnabled: true, allowedDirectories: [dir],
     }));
     const probe = path.join(dir, 'probe.txt');
     await fs.writeFile(probe, 'UI_TEXT_MODE_OK\n');
-    const env = localMcpEnvironment({ ...process.env, HOME: dir, USERPROFILE: dir,
-      DC_FLAG_URL: 'http://127.0.0.1:1/disabled-for-test' });
+    const env = localMcpEnvironment({ ...process.env, HOME: dir, USERPROFILE: dir });
     const client = new Client({ name: 'local-ui-preference-test', version: '1.0.0' }, { capabilities: {} });
     const transport = new StdioClientTransport({ command: process.execPath,
       args: [path.join(repo, 'local', 'start-local.mjs')], cwd: repo, env, stderr: 'pipe' });

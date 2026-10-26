@@ -7,7 +7,7 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
 }
 
-export function getFileExtensionForAnalytics(filePath: string): string {
+export function getFileExtension(filePath: string): string {
     const normalizedPath = filePath.trim().replace(/\\/g, '/');
     const fileName = normalizedPath.split('/').pop() ?? normalizedPath;
     const dotIndex = fileName.lastIndexOf('.');

@@ -1,4 +1,3 @@
-import path from 'path';
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
     CallToolRequestSchema,
@@ -22,7 +21,7 @@ const OS_GUIDANCE = getOSSpecificGuidance(SYSTEM_INFO);
 const DEV_TOOL_GUIDANCE = getDevelopmentToolGuidance(SYSTEM_INFO);
 const PATH_GUIDANCE = `IMPORTANT: ${getPathGuidance(SYSTEM_INFO)} Relative paths may fail as they depend on the current working directory. Tilde paths (~/...) might not work in all contexts. Unless the user explicitly asks for relative paths, use absolute paths.`;
 
-const CMD_PREFIX_DESCRIPTION = `This command can be referenced as "DC: ..." or "use Desktop Commander to ..." in your instructions.`;
+const CMD_PREFIX_DESCRIPTION = `This command can be referenced as "SGG: ..." or "use SGG Local MCP to ..." in your instructions.`;
 
 import {
     StartProcessArgsSchema,
@@ -43,12 +42,10 @@ import {
     ListProcessesArgsSchema,
     EditBlockArgsSchema,
     GetUsageStatsArgsSchema,
-    GiveFeedbackArgsSchema,
     StartSearchArgsSchema,
     GetMoreSearchResultsArgsSchema,
     StopSearchArgsSchema,
     ListSearchesArgsSchema,
-    GetPromptsArgsSchema,
     GetRecentToolCallsArgsSchema,
     WritePdfArgsSchema,
     toolArgSchemas,
@@ -59,19 +56,15 @@ import {
     buildUnsupportedParamsWarning,
 } from './utils/unsupportedParams.js';
 import { getConfig, setConfigValue } from './tools/config.js';
+import { configManager } from './config-manager.js';
 import { getUsageStats } from './tools/usage.js';
-import { giveFeedbackToDesktopCommander } from './tools/feedback.js';
-import { getPrompts } from './tools/prompts.js';
 import { trackToolCall } from './utils/trackTools.js';
 import { usageTracker } from './utils/usageTracker.js';
-import { processDockerPrompt } from './utils/dockerPrompt.js';
 import { toolHistory } from './utils/toolHistory.js';
 import { fileProbeTool, inspectFileDescriptor } from './tools/chat-file-probe.js';
 import { importChatFileTool, getChatFileTransferTool, importChatFile, getChatFileTransfer } from './tools/chat-file-import.js';
-import { handleWelcomePageOnboarding, skipWelcomePageOnboarding } from './utils/welcome-onboarding.js';
 
 import { VERSION } from './version.js';
-import { capture, capture_call_tool, runInUiOriginCallContext } from "./utils/capture.js";
 import { logToStderr, logger } from './utils/logger.js';
 import {
     buildUiToolMeta,
@@ -79,7 +72,6 @@ import {
     FILE_PREVIEW_RESOURCE_URI,
 } from './ui/contracts.js';
 import { listUiResources, readUiResource } from './ui/resources.js';
-import { shouldShowMcpUiPreviews } from './utils/mcp-ui-ab-test.js';
 
 // Store startup messages to send after initialization
 const deferredMessages: Array<{ level: string, message: string }> = [];
@@ -140,48 +132,6 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
 // Store current client info (simple variable)
 let currentClient = { name: 'uninitialized', version: 'uninitialized' };
 
-// Tracks whether the in-flight tool call originated from a remote device.
-// Mirrors the module-level `currentClient` pattern so that telemetry events
-// emitted deeper inside tool handlers (e.g. server_start_process,
-// server_read_file) can be attributed to the remote path. The CallTool
-// handler sets this on every call (true when _meta.remote is present,
-// false otherwise) so the flag never leaks from a remote call to a
-// subsequent local call.
-let currentCallIsRemote = false;
-
-/**
- * Set whether the current tool call is from a remote device.
- * Called once per tool call by the CallTool handler.
- */
-function setCurrentCallIsRemote(isRemote: boolean) {
-    currentCallIsRemote = isRemote;
-}
-
-// The remote caller's client for the in-flight tool call (e.g. openai-mcp,
-// claude-ai). Set per CallTool when the call is remote; null for local calls.
-// Mirrors currentCallIsRemote so telemetry attributes remote events to the
-// actual remote client instead of the device's own currentClient (which stays
-// LOCAL and must not be polluted by remote callers).
-let currentRemoteClient: { name?: string; version?: string } | null = null;
-
-/**
- * Set the remote caller's client for the current tool call (null when local).
- * Called once per tool call by the CallTool handler.
- */
-function setCurrentRemoteClient(clientInfo: { name?: string; version?: string } | null) {
-    currentRemoteClient = clientInfo;
-}
-
-/**
- * True when this server instance is serving remote services rather than a
- * local MCP client. The remote-device wrapper marks the server it spawns with
- * DC_REMOTE_DEVICE=true (see remote-device/desktop-commander-integration.ts);
- * the client-name check covers older wrappers that predate the env marker.
- */
-function isRemoteClientContext(clientName?: string): boolean {
-    return process.env.DC_REMOTE_DEVICE === 'true' || clientName === 'desktop-commander-client';
-}
-
 /**
  * Unified way to update client information
  */
@@ -207,49 +157,13 @@ async function updateCurrentClient(clientInfo: { name?: string, version?: string
     return false;
 }
 
-// Add handler for initialization method - capture client info
+// Initialize the MCP connection and retain client info for local diagnostics.
 server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequest) => {
     try {
-        // Extract and store current client information
         const clientInfo = request.params?.clientInfo;
         if (clientInfo) {
             await updateCurrentClient(clientInfo);
-
-            // Welcome page for new users (A/B test controlled) — all clients except
-            // the Desktop Commander app and remote contexts. Further exclusions are
-            // flag-served via welcome_page_excluded_clients (e.g. claude-code, which
-            // covers Claude Code and Cowork plugin sessions — both identify as
-            // `claude-code` and provide their own onboarding surface).
-            const isWelcomePageEligibleClient = currentClient.name !== 'desktop-commander-app'
-                && currentClient.name !== 'desktop-commander'
-                && !isRemoteClientContext(currentClient.name)
-                && !(global as any).disableOnboarding;
-
-            if (isWelcomePageEligibleClient) {
-                await handleWelcomePageOnboarding(currentClient.name);
-            } else {
-                // Do not carry a first-run page over to a client that is made
-                // eligible in a later release.
-                await skipWelcomePageOnboarding();
-            }
         }
-
-        // Raw host environment signals (no PII, undefined when absent). Some
-        // hosts share a clientInfo name — Claude Code CLI, Claude Code inside
-        // the Claude Desktop app, and Cowork all report 'claude-code' — and
-        // these let analytics tell them apart without client-specific
-        // branching in code. Verified signatures: CLI → entrypoint 'cli';
-        // CC-in-desktop → entrypoint 'claude-desktop'; Cowork → no
-        // entrypoint/agent, plugin id 'desktop-commander-inline'.
-        // Values truncated to GA4's 100-char param limit (same convention as
-        // containerName/containerImage) so an oversized value can never get
-        // the whole event rejected.
-        capture('run_server_mcp_initialized', {
-            host_entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT?.substring(0, 100),
-            host_agent: process.env.AI_AGENT?.substring(0, 100),
-            host_plugin_id: process.env.CLAUDE_PLUGIN_DATA
-                ? path.basename(process.env.CLAUDE_PLUGIN_DATA).substring(0, 100) : undefined
-        });
 
         // Negotiate protocol version with client
         const requestedVersion = request.params?.protocolVersion;
@@ -278,31 +192,14 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
 });
 
 // Export current client info for access by other modules
-export { currentClient, currentCallIsRemote, currentRemoteClient };
+export { currentClient };
 
 deferLog('info', 'Setting up request handlers...');
-
-/**
- * Check if a tool should be included based on current client
- */
-function shouldIncludeTool(toolName: string): boolean {
-    // Exclude these tools for desktop-commander client (DC-specific meta-tools not useful when DC itself is the client)
-    if (currentClient?.name === 'desktop-commander-app') {
-        if (toolName === 'give_feedback_to_desktop_commander' || toolName === 'get_prompts') {
-            return false;
-        }
-    }
-
-    // Add more conditional tool logic here as needed
-    // Example: if (toolName === 'some_tool' && currentClient?.name === 'some_client') return false;
-
-    return true;
-}
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
         // logToStderr('debug', 'Generating tools list...');
-        const showMcpUiPreviews = await shouldShowMcpUiPreviews();
+        const showMcpUiPreviews = (await configManager.getValue('mcpUiPreviewsEnabled')) !== false;
 
         // Build complete tools array
         const allTools = [
@@ -319,11 +216,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - allowedDirectories (paths the server can access)
                         - fileReadLineLimit (max lines for read_file, default 1000)
                         - fileWriteLineLimit (max lines per write_file call, default 50)
-                        - telemetryEnabled (boolean for telemetry opt-in/out)
                         - mcpUiPreviewsEnabled (false disables interactive HTML cards; tool results remain available)
                         - currentClient (information about the currently connected MCP client)
                         - clientHistory (history of all clients that have connected)
-                        - version (version of the DesktopCommander)
+                        - version (version of SGG Local MCP)
                         - systemInfo (operating system and environment details)
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(GetConfigArgsSchema),
@@ -347,7 +243,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - allowedDirectories (array of paths)
                         - fileReadLineLimit (number, max lines for read_file)
                         - fileWriteLineLimit (number, max lines per write_file call)
-                        - telemetryEnabled (boolean)
                         - mcpUiPreviewsEnabled (boolean; false for results without interactive HTML cards)
                         
                         IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access 
@@ -995,7 +890,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - input: Text or command to send to the process
                         - timeout_ms: Maximum wait time (default: 8000ms)
                         - wait_for_prompt: Whether to wait for a prompt before returning (default: true)
-                        - verbose_timing: Include detailed timing telemetry (default: false)
+                        - verbose_timing: Include detailed local timing information (default: false)
 
                         Returns execution result with status indicators.
 
@@ -1083,7 +978,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             {
                 name: "get_usage_stats",
                 description: `
-                        Get usage statistics for debugging and analysis.
+                        Get local usage statistics for debugging and analysis.
                         
                         Returns summary of tool usage, success/failure rates, and performance metrics.
                         
@@ -1101,11 +996,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Returns a chronological list of recent calls loaded from the local history file.
                         
                         Useful for:
-                        - Onboarding new chats about work already done
+                        - Restoring context in new chats about work already done
                         - Recovering context after chat history loss
                         - Debugging tool call sequences
                         
-                        Note: Does not track its own calls or track_ui_event.
+                        Note: Does not track its own calls.
                         History is persisted locally in tool-history.jsonl, keeps up to the last 1000
                         calls in memory, and trims older on-disk history. Stored outputs over 4 KiB
                         are replaced with an omission marker.
@@ -1117,88 +1012,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     readOnlyHint: true,
                 },
             },
-            {
-                name: "give_feedback_to_desktop_commander",
-                description: `
-                        Open feedback form in browser to provide feedback about Desktop Commander.
-                        
-                        IMPORTANT: This tool simply opens the feedback form - no pre-filling available.
-                        The user will fill out the form manually in their browser.
-                        
-                        WORKFLOW:
-                        1. When user agrees to give feedback, just call this tool immediately
-                        2. No need to ask questions or collect information
-                        3. Tool opens form with only usage statistics pre-filled automatically:
-                           - tool_call_count: Number of commands they've made
-                           - days_using: How many days they've used Desktop Commander
-                           - platform: Their operating system (Mac/Windows/Linux)
-                           - client_id: Analytics identifier
-                        
-                        All survey questions will be answered directly in the form:
-                        - Job title and technical comfort level
-                        - Company URL for industry context
-                        - Other AI tools they use
-                        - Desktop Commander's biggest advantage
-                        - How they typically use it
-                        - Recommendation likelihood (0-10)
-                        - User study participation interest
-                        - Email and any additional feedback
-                        
-                        EXAMPLE INTERACTION:
-                        User: "sure, I'll give feedback"
-                        Claude: "Perfect! Let me open the feedback form for you."
-                        [calls tool immediately]
-                        
-                        No parameters are needed - just call the tool to open the form.
-                        
-                        ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(GiveFeedbackArgsSchema),
-                annotations: {
-                    title: "Give Feedback",
-                    readOnlyHint: false,
-                    openWorldHint: true,
-                },
-            },
-            {
-                name: "get_prompts",
-                description: `
-                        Retrieve a specific Desktop Commander onboarding prompt by ID and execute it.
-                        
-                        SIMPLIFIED ONBOARDING V2: This tool only supports direct prompt retrieval.
-                        The onboarding system presents 5 options as a simple numbered list:
-                        
-                        1. Organize my Downloads folder (promptId: 'onb2_01')
-                        2. Explain a codebase or repository (promptId: 'onb2_02')
-                        3. Create organized knowledge base (promptId: 'onb2_03')
-                        4. Analyze a data file (promptId: 'onb2_04')
-                        5. Check system health and resources (promptId: 'onb2_05')
-                        
-                        USAGE:
-                        When user says "1", "2", "3", "4", or "5" from onboarding:
-                        - "1" → get_prompts(action='get_prompt', promptId='onb2_01')
-                        - "2" → get_prompts(action='get_prompt', promptId='onb2_02')
-                        - "3" → get_prompts(action='get_prompt', promptId='onb2_03')
-                        - "4" → get_prompts(action='get_prompt', promptId='onb2_04')
-                        - "5" → get_prompts(action='get_prompt', promptId='onb2_05')
-                        
-                        The prompt content will be injected and execution begins immediately.
-
-                        ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
-                annotations: {
-                    title: "Get Prompts",
-                    readOnlyHint: true,
-                },
-            }
         ];
 
-        // Filter tools based on current client
-        const filteredTools = allTools.filter(tool => shouldIncludeTool(tool.name));
-
-        // logToStderr('debug', `Returning ${filteredTools.length} tools (filtered from ${allTools.length} total) for client: ${currentClient?.name || 'unknown'}`);
-
         return {
-            tools: filteredTools,
+            tools: allTools,
         };
     } catch (error) {
         logToStderr('error', `Error in list_tools request handler: ${error}`);
@@ -1209,81 +1026,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 import * as handlers from './handlers/index.js';
 import { ServerResult } from './types.js';
 
-server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<ServerResult> => {
-    const args = request.params.arguments;
-    // Calls fired programmatically by the widget UIs (file preview, config
-    // editor) carry origin:'ui'. They are real tool executions but not agent
-    // actions, so they must produce zero telemetry: running them inside the
-    // UI-origin capture context makes capture() drop every event they raise
-    // (server_call_tool, server_read_file, server_edit_block, ...). Deliberate
-    // UI interactions are tracked separately via mcp_ui_event.
-    const isUiOriginCall = !!(args && typeof args === 'object' && (args as any).origin === 'ui');
-    if (isUiOriginCall) {
-        return runInUiOriginCallContext(() => handleCallToolRequest(request));
-    }
-    return handleCallToolRequest(request);
-});
+server.setRequestHandler(CallToolRequestSchema, handleCallToolRequest);
 
 async function handleCallToolRequest(request: CallToolRequest): Promise<ServerResult> {
     const { name, arguments: args } = request.params;
     const startTime = Date.now();
-    // Hoisted above the try so the finally block can read them when emitting the
-    // server_call_tool completion event (duration + status), even on the crash path.
-    let telemetryData: any = { tool_name: name };
     let result: ServerResult;
-    let isError = false;
 
     try {
-        // telemetryData declared above; extract metadata from _meta field if present
-        const metadata = request.params._meta as any;
-        // Reset remote attribution for every call so a prior remote call never
-        // leaks its flag onto a subsequent local call. Set to true only when
-        // this call carries the remote marker in _meta.
-        const isRemoteCall = !!(metadata && typeof metadata === 'object' && metadata.remote);
-        setCurrentCallIsRemote(isRemoteCall);
-        if (isRemoteCall) {
-            // add remote flag (convert to string for telemetry)
-            telemetryData.remote = String(metadata.remote);
-            // Remote calls carry the originating MCP client (e.g. openai-mcp,
-            // claude-ai) in _meta.clientInfo. Attribute this call to that remote
-            // client — NOT the device's own currentClient. Fall back to a sentinel
-            // when it's absent so the call is visibly remote-but-unattributed
-            // rather than masquerading as the local device client. We deliberately
-            // do NOT call updateCurrentClient here: currentClient tracks the LOCAL
-            // client and must not be polluted (nor its transport reconfigured) by
-            // remote callers.
-            const remoteClient =
-                metadata.clientInfo && (metadata.clientInfo.name || metadata.clientInfo.version)
-                    ? metadata.clientInfo
-                    : { name: 'remote-unknown', version: 'unknown' };
-            setCurrentRemoteClient(remoteClient);
-            telemetryData.client_name = remoteClient.name;
-            telemetryData.client_version = remoteClient.version;
-        } else {
-            // Local call — clear any remote attribution left by a prior call.
-            setCurrentRemoteClient(null);
-        }
-
-        if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
-            telemetryData.set_config_value_key_name = (args as any).key;
-        }
-        if (name === 'get_prompts' && args && typeof args === 'object') {
-            const promptArgs = args as any;
-            telemetryData.action = promptArgs.action;
-            if (promptArgs.category) {
-                telemetryData.category = promptArgs.category;
-                telemetryData.has_category_filter = true;
-            }
-            if (promptArgs.promptId) {
-                telemetryData.prompt_id = promptArgs.promptId;
-            }
-        }
-
         // Track tool call
         trackToolCall(name, args);
-
-        // Using a more structured approach with dedicated handlers
-        // (result is declared above so the finally block can read execution status)
 
         switch (name) {
             case 'import_chat_file':
@@ -1300,7 +1052,6 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                 try {
                     result = await getConfig();
                 } catch (error) {
-                    capture('server_request_error', { message: `Error in get_config handler: ${error}` });
                     result = {
                         content: [{ type: "text", text: `Error: Failed to get configuration` }],
                         isError: true,
@@ -1311,7 +1062,6 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                 try {
                     result = await setConfigValue(args);
                 } catch (error) {
-                    capture('server_request_error', { message: `Error in set_config_value handler: ${error}` });
                     result = {
                         content: [{ type: "text", text: `Error: Failed to set configuration value` }],
                         isError: true,
@@ -1323,55 +1073,8 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                 try {
                     result = await getUsageStats();
                 } catch (error) {
-                    capture('server_request_error', { message: `Error in get_usage_stats handler: ${error}` });
                     result = {
                         content: [{ type: "text", text: `Error: Failed to get usage statistics` }],
-                        isError: true,
-                    };
-                }
-                break;
-
-            case "get_prompts":
-                try {
-                    result = await getPrompts(args || {});
-
-                    // Capture detailed analytics for all successful get_prompts actions
-                    if (args && typeof args === 'object' && !result.isError) {
-                        const action = (args as any).action;
-
-                        try {
-                            if (action === 'get_prompt' && (args as any).promptId) {
-                                // Existing get_prompt analytics
-                                const { loadPromptsData } = await import('./tools/prompts.js');
-                                const promptsData = await loadPromptsData();
-                                const prompt = promptsData.prompts.find(p => p.id === (args as any).promptId);
-                                if (prompt) {
-                                    await capture('server_get_prompt', {
-                                        prompt_id: prompt.id,
-                                        prompt_title: prompt.title,
-                                        category: prompt.categories[0] || 'uncategorized',
-                                        author: prompt.author,
-                                        verified: prompt.verified,
-                                        // Temporarily disabled for privacy review - Dec 2025
-                                        // anonymous_use_case: (args as any).anonymous_user_use_case || null
-                                    });
-                                }
-                            }
-                        } catch (error) {
-                            // Don't fail the request if analytics fail
-                        }
-                    }
-
-                    // Track if user used get_prompts after seeing onboarding invitation (for state management only)
-                    const onboardingState = await usageTracker.getOnboardingState();
-                    if (onboardingState.attemptsShown > 0 && !onboardingState.promptsUsed) {
-                        // Mark that they used prompts after seeing onboarding (stops future onboarding messages)
-                        await usageTracker.markOnboardingPromptsUsed();
-                    }
-                } catch (error) {
-                    capture('server_request_error', { message: `Error in get_prompts handler: ${error}` });
-                    result = {
-                        content: [{ type: "text", text: `Error: Failed to retrieve prompts` }],
                         isError: true,
                     };
                 }
@@ -1381,7 +1084,6 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                 try {
                     result = await handlers.handleGetRecentToolCalls(args);
                 } catch (error) {
-                    capture('server_request_error', { message: `Error in get_recent_tool_calls handler: ${error}` });
                     result = {
                         content: [{ type: "text", text: `Error: Failed to get tool call history` }],
                         isError: true,
@@ -1389,31 +1091,6 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                 }
                 break;
 
-            case "track_ui_event":
-                try {
-                    result = await handlers.handleTrackUiEvent(args);
-                } catch (error) {
-                    capture('server_request_error', { message: `Error in track_ui_event handler: ${error}` });
-                    result = {
-                        content: [{ type: "text", text: `Error: Failed to track UI event` }],
-                        isError: true,
-                    };
-                }
-                break;
-
-            case "give_feedback_to_desktop_commander":
-                try {
-                    result = await giveFeedbackToDesktopCommander(args);
-                } catch (error) {
-                    capture('server_request_error', { message: `Error in give_feedback_to_desktop_commander handler: ${error}` });
-                    result = {
-                        content: [{ type: "text", text: `Error: Failed to open feedback form` }],
-                        isError: true,
-                    };
-                }
-                break;
-
-            // Terminal tools
             case "start_process":
                 result = await handlers.handleStartProcess(args);
                 break;
@@ -1499,116 +1176,27 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                 break;
 
             default:
-                capture('server_unknown_tool', { name });
                 result = {
                     content: [{ type: "text", text: `Error: Unknown tool: ${name}` }],
                     isError: true,
                 };
         }
 
-        // Add tool call to history (exclude only get_recent_tool_calls to prevent recursion)
+        // Keep local history without recursively recording history retrievals.
         const duration = Date.now() - startTime;
-        isError = !!result.isError;
-        const EXCLUDED_TOOLS = [
-            'get_recent_tool_calls',
-            'track_ui_event'
-        ];
-
-        if (!EXCLUDED_TOOLS.includes(name)) {
+        if (name !== 'get_recent_tool_calls') {
             toolHistory.addCall(name, args, result, duration);
         }
 
-        // Track success or failure based on result
-        if (['track_ui_event', 'inspect_chat_file_source', 'import_chat_file', 'get_chat_file_transfer'].includes(name)) {
+        // File transfer/probe operations keep their existing statistics exclusion.
+        if (['inspect_chat_file_source', 'import_chat_file', 'get_chat_file_transfer'].includes(name)) {
             return result;
         }
 
         if (result.isError) {
             await usageTracker.trackFailure(name);
-            console.log(`[FEEDBACK DEBUG] Tool ${name} failed, not checking feedback`);
         } else {
             await usageTracker.trackSuccess(name);
-            console.log(`[FEEDBACK DEBUG] Tool ${name} succeeded, checking feedback...`);
-
-            // Check if should show onboarding (before feedback - first-time users are priority)
-            const shouldShowOnboarding = await usageTracker.shouldShowOnboarding();
-            console.log(`[ONBOARDING DEBUG] Should show onboarding: ${shouldShowOnboarding}`);
-
-            if (shouldShowOnboarding) {
-                console.log(`[ONBOARDING DEBUG] Generating onboarding message...`);
-                const onboardingResult = await usageTracker.getOnboardingMessage();
-                console.log(`[ONBOARDING DEBUG] Generated variant: ${onboardingResult.variant}`);
-
-                // Capture onboarding prompt injection event
-                const stats = await usageTracker.getStats();
-                await capture('server_onboarding_shown', {
-                    trigger_tool: name,
-                    total_calls: stats.totalToolCalls,
-                    successful_calls: stats.successfulCalls,
-                    days_since_first_use: Math.floor((Date.now() - stats.firstUsed) / (1000 * 60 * 60 * 24)),
-                    total_sessions: stats.totalSessions,
-                    message_variant: onboardingResult.variant
-                });
-
-                // Inject onboarding message for the LLM
-                if (result.content && result.content.length > 0 && result.content[0].type === "text") {
-                    const currentContent = result.content[0].text || '';
-                    result.content[0].text = `${currentContent}${onboardingResult.message}`;
-                } else {
-                    result.content = [
-                        ...(result.content || []),
-                        {
-                            type: "text",
-                            text: onboardingResult.message
-                        }
-                    ];
-                }
-
-                // Mark that we've shown onboarding (to prevent spam)
-                await usageTracker.markOnboardingShown(onboardingResult.variant);
-            }
-
-            // Check if should prompt for feedback (only on successful operations)
-            const shouldPrompt = await usageTracker.shouldPromptForFeedback();
-            console.log(`[FEEDBACK DEBUG] Should prompt for feedback: ${shouldPrompt}`);
-
-            if (shouldPrompt) {
-                console.log(`[FEEDBACK DEBUG] Generating feedback message...`);
-                const feedbackResult = await usageTracker.getFeedbackPromptMessage();
-                console.log(`[FEEDBACK DEBUG] Generated variant: ${feedbackResult.variant}`);
-
-                // Capture feedback prompt injection event
-                const stats = await usageTracker.getStats();
-                await capture('feedback_prompt_injected', {
-                    trigger_tool: name,
-                    total_calls: stats.totalToolCalls,
-                    successful_calls: stats.successfulCalls,
-                    failed_calls: stats.failedCalls,
-                    days_since_first_use: Math.floor((Date.now() - stats.firstUsed) / (1000 * 60 * 60 * 24)),
-                    total_sessions: stats.totalSessions,
-                    message_variant: feedbackResult.variant
-                });
-
-                // Inject feedback instruction for the LLM
-                if (result.content && result.content.length > 0 && result.content[0].type === "text") {
-                    const currentContent = result.content[0].text || '';
-                    result.content[0].text = `${currentContent}${feedbackResult.message}`;
-                } else {
-                    result.content = [
-                        ...(result.content || []),
-                        {
-                            type: "text",
-                            text: feedbackResult.message
-                        }
-                    ];
-                }
-
-                // Mark that we've prompted (to prevent spam)
-                await usageTracker.markFeedbackPrompted();
-            }
-
-            // Check if should prompt about Docker environment
-            result = await processDockerPrompt(result, name);
         }
 
         // If the caller sent parameters this tool does not support, Zod silently
@@ -1634,34 +1222,15 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
 
         return result;
     } catch (error) {
-        isError = true;
         const errorMessage = error instanceof Error ? error.message : String(error);
 
         // Track the failure
         await usageTracker.trackFailure(name);
 
-        capture('server_request_error', {
-            error: errorMessage
-        });
         return {
             content: [{ type: "text", text: `Error: ${errorMessage}` }],
             isError: true,
         };
-    } finally {
-        // Single tool-call telemetry event, fired AFTER execution so it can carry
-        // timing. In a finally so it still fires on the hard-crash path (the catch
-        // above). Only missed if a tool never returns or throws (a true hang).
-        // Not emitted for track_ui_event (it is just the transport for
-        // mcp_ui_event) — and UI-origin calls are dropped wholesale by the
-        // capture layer, so server_call_tool reflects only genuine
-        // agent-driven tool calls.
-        if (name !== 'track_ui_event') {
-            capture_call_tool('server_call_tool', {
-                ...telemetryData,
-                duration_ms: Date.now() - startTime,
-                is_error: String(isError),
-            });
-        }
     }
 }
 

@@ -22,7 +22,6 @@
 import assert from 'node:assert';
 import { terminalManager } from '../dist/terminal-manager.js';
 
-process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
 // A path that cannot resolve on any platform we support.
 const BOGUS_SHELL = process.platform === 'win32'

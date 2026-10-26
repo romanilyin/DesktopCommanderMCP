@@ -21,7 +21,7 @@ async function parent() {
   const home = mkdtempSync(path.join(os.tmpdir(), 'dc-atomic-'));
   const configPath = path.join(home, '.claude-server-commander', 'config.json');
   mkdirSync(path.dirname(configPath), { recursive: true });
-  writeFileSync(configPath, JSON.stringify({ telemetryEnabled: false, welcomeOnboardingEligible: false, pendingWelcomeOnboarding: false }));
+  writeFileSync(configPath, JSON.stringify({ mcpUiPreviewsEnabled: true }));
   const child = fork(TEST_FILE, [], { env: { ...process.env, HOME: home, USERPROFILE: home, DC_ATOMIC_WORKER: '1' }, stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
   let done = false, parseFailures = 0, reads = 0;
   child.on('message', (m) => { if (m.type === 'done') done = true; });

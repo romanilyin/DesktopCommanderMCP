@@ -14,4 +14,4 @@ $trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
 $trigger.Delay = 'PT20S'
 $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'Connects the local Desktop Commander tunnel at Windows logon.' | Select-Object TaskName,State
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'Connects the local SGG Local MCP tunnel at Windows logon.' | Select-Object TaskName,State

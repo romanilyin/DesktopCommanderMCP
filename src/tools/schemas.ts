@@ -2,8 +2,7 @@ import { z } from "zod";
 
 // Config tools schemas
 export const GetConfigArgsSchema = z.object({
-  // 'ui' marks calls the config-editor widget fires programmatically; they are
-  // excluded from tool-call telemetry (see isUiOriginCall in server.ts).
+  // 'ui' marks calls the config-editor widget fires programmatically.
   origin: z.enum(['ui', 'llm']).optional(),
 });
 
@@ -16,7 +15,7 @@ export const SetConfigValueArgsSchema = z.object({
     z.array(z.string()),
     z.null(),
   ]),
-  // 'ui' marks widget-fired calls; excluded from tool-call telemetry.
+  // Preserve the caller origin for compatibility with existing widgets.
   origin: z.enum(['ui', 'llm']).optional(),
 });
 
@@ -29,8 +28,7 @@ export const StartProcessArgsSchema = z.object({
   timeout_ms: z.number(),
   shell: z.string().optional(),
   verbose_timing: z.boolean().optional(),
-  // 'ui' marks widget-fired calls (e.g. open-in-folder/editor buttons);
-  // excluded from tool-call telemetry (see isUiOriginCall in server.ts).
+  // 'ui' marks widget-fired calls (e.g. open-in-folder/editor buttons).
   origin: z.enum(['ui', 'llm']).optional(),
 });
 
@@ -61,9 +59,7 @@ export const ReadFileArgsSchema = z.object({
   sheet: z.string().optional(),  // String only for MCP client compatibility (Cursor doesn't support union types in JSON Schema)
   range: z.string().optional(),
   options: z.record(z.string(), z.any()).optional(),
-  // Whether the call came from the file-preview UI (refresh/navigation) or the
-  // LLM. 'ui' calls are excluded from tool-call telemetry; see isUiOriginCall
-  // in server.ts.
+  // Whether the call came from the file-preview UI or the LLM.
   origin: z.enum(['ui', 'llm']).optional(),
 });
 
@@ -75,8 +71,7 @@ export const WriteFileArgsSchema = z.object({
   path: z.string(),
   content: z.string(),
   mode: z.enum(['rewrite', 'append']).default('rewrite'),
-  // 'ui' when fired by the file-preview UI, else 'llm'. 'ui' calls are
-  // excluded from tool-call telemetry; see isUiOriginCall in server.ts.
+  // Preserve the caller origin for compatibility with existing widgets.
   origin: z.enum(['ui', 'llm']).optional(),
 });
 
@@ -126,8 +121,7 @@ export const CreateDirectoryArgsSchema = z.object({
 export const ListDirectoryArgsSchema = z.object({
   path: z.string(),
   depth: z.number().optional().default(2),
-  // 'ui' when fired by the file-preview UI, else 'llm'. 'ui' calls are
-  // excluded from tool-call telemetry; see isUiOriginCall in server.ts.
+  // Preserve the caller origin for compatibility with existing widgets.
   origin: z.enum(['ui', 'llm']).optional(),
 });
 
@@ -155,8 +149,7 @@ export const EditBlockArgsSchema = z.object({
   range: z.string().optional(),
   content: z.any().optional(),
   options: z.record(z.string(), z.any()).optional(),
-  // 'ui' when fired by the file-preview UI, else 'llm'. 'ui' calls are
-  // excluded from tool-call telemetry; see isUiOriginCall in server.ts.
+  // Preserve the caller origin for compatibility with existing widgets.
   origin: z.enum(['ui', 'llm']).optional(),
 }).refine(
   data => {
@@ -180,16 +173,6 @@ export const InteractWithProcessArgsSchema = z.object({
 // Usage stats schema
 export const GetUsageStatsArgsSchema = z.object({});
 
-// Feedback tool schema - no pre-filled parameters, all user input
-export const GiveFeedbackArgsSchema = z.object({
-  // No parameters needed - form will be filled manually by user
-  // Only auto-filled hidden fields remain:
-  // - tool_call_count (auto)
-  // - days_using (auto) 
-  // - platform (auto)
-  // - client_id (auto)
-});
-
 // Search schemas (renamed for natural language)
 export const StartSearchArgsSchema = z.object({
   path: z.string(),
@@ -203,8 +186,7 @@ export const StartSearchArgsSchema = z.object({
   timeout_ms: z.number().optional(), // Match process naming convention
   earlyTermination: z.boolean().optional(), // Stop search early when exact filename match is found (default: true for files, false for content)
   literalSearch: z.boolean().optional().default(false), // Force literal string matching (-F flag) instead of regex
-  // 'ui' marks widget-fired calls (e.g. markdown link-target search);
-  // excluded from tool-call telemetry (see isUiOriginCall in server.ts).
+  // Preserve the caller origin for compatibility with existing widgets.
   origin: z.enum(['ui', 'llm']).optional(),
 });
 
@@ -220,25 +202,11 @@ export const StopSearchArgsSchema = z.object({
 
 export const ListSearchesArgsSchema = z.object({});
 
-// Prompts tool schema - SIMPLIFIED (only get_prompt action)
-export const GetPromptsArgsSchema = z.object({
-  action: z.enum(['get_prompt']),
-  promptId: z.string(),
-  // Disabled to check if it makes sense or should be removed or changed
-  // anonymous_user_use_case: z.string().optional(),
-});
-
 // Tool history schema
 export const GetRecentToolCallsArgsSchema = z.object({
   maxResults: z.number().min(1).max(1000).optional().default(50),
   toolName: z.string().optional(),
   since: z.string().datetime().optional(),
-});
-
-export const TrackUiEventArgsSchema = z.object({
-  event: z.string().min(1).max(80),
-  component: z.string().optional().default('file_preview'),
-  params: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional().default({}),
 });
 
 /**
@@ -271,7 +239,4 @@ export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
   kill_process: KillProcessArgsSchema,
   get_usage_stats: GetUsageStatsArgsSchema,
   get_recent_tool_calls: GetRecentToolCallsArgsSchema,
-  give_feedback_to_desktop_commander: GiveFeedbackArgsSchema,
-  get_prompts: GetPromptsArgsSchema,
-  track_ui_event: TrackUiEventArgsSchema,
 };

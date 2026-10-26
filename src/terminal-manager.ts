@@ -3,7 +3,6 @@ import path from 'path';
 import { TerminalSession, CommandExecutionResult, ActiveSession, TimingInfo, OutputEvent } from './types.js';
 import { DEFAULT_COMMAND_TIMEOUT } from './config.js';
 import { configManager } from './config-manager.js';
-import {capture} from "./utils/capture.js";
 import { analyzeProcessState } from './utils/process-detection.js';
 
 /**
@@ -302,7 +301,7 @@ export class TerminalManager {
 
     this.sessions.set(childProcess.pid, session);
 
-    // Timing telemetry
+    // Local timing diagnostics
     const startTime = Date.now();
     let firstOutputTime: number | undefined;
     let lastOutputTime: number | undefined;
@@ -769,9 +768,6 @@ export class TerminalManager {
         }, 1000);
         return true;
       } catch (error) {
-        // Convert error to string, handling both Error objects and other types
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        capture('server_request_error', {error: errorMessage, message: `Failed to terminate process ${pid}:`});
         return false;
       }
   }

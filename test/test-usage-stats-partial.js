@@ -34,7 +34,7 @@ async function parent() {
   const home = mkdtempSync(path.join(os.tmpdir(), 'dc-partial-stats-'));
   const configPath = path.join(home, '.claude-server-commander', 'config.json');
   mkdirSync(path.dirname(configPath), { recursive: true });
-  writeFileSync(configPath, JSON.stringify({ telemetryEnabled: false, welcomeOnboardingEligible: false, pendingWelcomeOnboarding: false, usageStats: { toolCounts: {} } }));
+  writeFileSync(configPath, JSON.stringify({ usageStats: { toolCounts: {} } }));
   const child = fork(TEST_FILE, [], { env: { ...process.env, HOME: home, USERPROFILE: home, DC_PARTIAL_STATS_WORKER: '1' }, stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
   try {
     await new Promise((resolve, reject) => {

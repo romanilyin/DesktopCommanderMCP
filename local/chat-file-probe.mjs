@@ -1,5 +1,5 @@
 // Stage A only: observe the ChatGPT file-input contract without downloading,
-// writing files, importing the Desktop Commander server or loading user config.
+// writing files, importing the SGG Local MCP server or loading user config.
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';

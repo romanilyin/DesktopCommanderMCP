@@ -116,7 +116,7 @@ if ($Action -eq 'Install') {
     $logon.Delay='PT45S'
     $principal=New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Limited
     $settings=New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Seconds 50)
-    Register-ScheduledTask -TaskPath '\' -TaskName $config.watchdogTaskName -Action $taskAction -Trigger @($trigger,$logon) -Principal $principal -Settings $settings -Description 'Checks for an absent Desktop Commander runtime; bounded recovery through its owned connect task. No MCP calls or termination of running services.' | Select-Object TaskName,State
+    Register-ScheduledTask -TaskPath '\' -TaskName $config.watchdogTaskName -Action $taskAction -Trigger @($trigger,$logon) -Principal $principal -Settings $settings -Description 'Checks for an absent SGG Local MCP runtime; bounded recovery through its owned connect task. No MCP calls or termination of running services.' | Select-Object TaskName,State
     return
 }
 

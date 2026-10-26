@@ -5,7 +5,6 @@ import { renderCompactRow } from '../../shared/compact-row.js';
 import { escapeHtml } from '../../shared/escape-html.js';
 import { createWidgetStateStorage } from '../../shared/widget-state.js';
 import { connectWithSharedHostContext, isObjectRecord, type UiChromeState } from '../../shared/host-context.js';
-import { createUiEventTracker, type UiEventParams } from '../../shared/ui-event-tracker.js';
 import { createArrayModalController, renderArrayModalMarkup } from './array-modal.js';
 import { CONFIG_FIELD_DEFINITIONS, isConfigFieldKey } from '../../../config-field-definitions.js';
 
@@ -47,56 +46,11 @@ export interface ApplyConfigResult {
 interface RenderHooks {
     onConfigChanged?: (change: { key: string; value: unknown }) => void;
     onTooltip?: (tooltip: TooltipMessage) => void;
-    onExpandedChanged?: (expanded: boolean) => void;
 }
 
 type ToolCall = (name: string, args?: Record<string, unknown>) => Promise<unknown>;
-type TrackConfigUiEvent = (event: string, params?: Record<string, unknown>) => void;
 
 let shellController: ToolShellController | undefined;
-
-const CONFIG_EDITOR_COMPONENT = 'config_editor';
-const GET_CONFIG_TOOL_NAME = 'get_config';
-const MAX_TELEMETRY_MESSAGE_LENGTH = 180;
-
-function sanitizeTelemetryErrorMessage(message: string): string {
-    // Keep error signal useful while removing path-like data and bounding payload size.
-    const collapsed = message.replace(/\s+/g, ' ').trim();
-    const withoutPaths = collapsed
-        .replace(/(?:\/|\\)[\w\d_.\-/\\]+/g, '[PATH]')
-        .replace(/[A-Za-z]:\\[\w\d_.\-/\\]+/g, '[PATH]');
-
-    if (withoutPaths.length === 0) {
-        return 'Unknown error';
-    }
-
-    if (withoutPaths.length <= MAX_TELEMETRY_MESSAGE_LENGTH) {
-        return withoutPaths;
-    }
-
-    return `${withoutPaths.slice(0, MAX_TELEMETRY_MESSAGE_LENGTH - 3)}...`;
-}
-
-function buildConfigUpdateTelemetryParams(args: {
-    configKey: string;
-    valueType: string;
-    errorMessage?: string;
-    errorStage?: 'set_config_value' | 'transport';
-}): UiEventParams {
-    const base: UiEventParams = {
-        config_key: args.configKey,
-        value_type: args.valueType,
-    };
-
-    if (args.errorStage) {
-        base.error_stage = args.errorStage;
-    }
-    if (args.errorMessage) {
-        base.error_message = sanitizeTelemetryErrorMessage(args.errorMessage);
-    }
-
-    return base;
-}
 
 function isConfigEditorPayload(value: unknown): value is ConfigEditorPayload {
     return isObjectRecord(value) && Array.isArray((value as Record<string, unknown>).entries);
@@ -356,7 +310,7 @@ function getShellOptions(payload: ConfigEditorPayload | null, currentShell: stri
     return [...options];
 }
 
-export function createConfigEditorController(callTool: ToolCall, trackConfigUiEvent?: TrackConfigUiEvent) {
+export function createConfigEditorController(callTool: ToolCall) {
     const state: ConfigEditorState = {
         payload: null,
         selectedKey: null,
@@ -443,15 +397,6 @@ export function createConfigEditorController(callTool: ToolCall, trackConfigUiEv
 
             if (isToolErrorResult(setResult)) {
                 const errorMessage = extractToolText(setResult) ?? `Failed to update ${selected.key}.`;
-                trackConfigUiEvent?.('config_update_failed', {
-                    tool_name: 'set_config_value',
-                    ...buildConfigUpdateTelemetryParams({
-                        configKey: selected.key,
-                        valueType: selected.valueType,
-                        errorMessage,
-                        errorStage: 'set_config_value',
-                    }),
-                });
 
                 return {
                     ok: false,
@@ -461,14 +406,6 @@ export function createConfigEditorController(callTool: ToolCall, trackConfigUiEv
                     },
                 };
             }
-
-            trackConfigUiEvent?.('config_update_success', {
-                tool_name: 'set_config_value',
-                ...buildConfigUpdateTelemetryParams({
-                    configKey: selected.key,
-                    valueType: selected.valueType,
-                }),
-            });
 
             const refreshed = await callTool('get_config', { origin: 'ui' });
             if (isToolErrorResult(refreshed)) {
@@ -498,15 +435,6 @@ export function createConfigEditorController(callTool: ToolCall, trackConfigUiEv
             };
         } catch (error) {
             const errorMessage = `Failed to apply value: ${error instanceof Error ? error.message : String(error)}`;
-            trackConfigUiEvent?.('config_update_failed', {
-                tool_name: 'set_config_value',
-                ...buildConfigUpdateTelemetryParams({
-                    configKey: selected.key,
-                    valueType: selected.valueType,
-                    errorMessage,
-                    errorStage: 'transport',
-                }),
-            });
 
             return {
                 ok: false,
@@ -593,11 +521,11 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
 
     container.innerHTML = `
       <main id="tool-shell" class="${shellClasses}">
-        ${renderCompactRow({ id: 'compact-toggle', label: 'View config', filename: 'Desktop Commander', variant: 'ready', expandable: true, expanded: chrome.expanded, interactive: true })}
+        ${renderCompactRow({ id: 'compact-toggle', label: 'View config', filename: 'SGG Local MCP', variant: 'ready', expandable: true, expanded: chrome.expanded, interactive: true })}
 
         <section class="panel config-card">
           <div class="panel-content-wrapper">
-            <div class="settings-stack" aria-label="Desktop Commander settings">${settingsHtml}</div>
+            <div class="settings-stack" aria-label="SGG Local MCP settings">${settingsHtml}</div>
           </div>
         </section>
 
@@ -793,7 +721,6 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
         initialExpanded: chrome.expanded,
         onToggle: (expanded) => {
             chrome.expanded = expanded;
-            hooks.onExpandedChanged?.(expanded);
         },
     });
 }
@@ -809,17 +736,7 @@ export function bootstrapConfigEditorApp(): void {
     }
 
     const bridge = createToolBridge();
-    const trackConfigUiEvent = createUiEventTracker(
-        (name, args) => bridge.callTool(name, args),
-        {
-            component: CONFIG_EDITOR_COMPONENT,
-            baseParams: { origin: 'ui' },
-        }
-    );
-    const controller = createConfigEditorController(
-        (name, args) => bridge.callTool(name, args),
-        trackConfigUiEvent
-    );
+    const controller = createConfigEditorController((name, args) => bridge.callTool(name, args));
     const widgetState = createWidgetStateStorage<ConfigEditorPayload>(isConfigEditorPayload);
     const chrome: UiChromeState = {
         hideSummaryRow: false,
@@ -889,12 +806,6 @@ export function bootstrapConfigEditorApp(): void {
                     syncModelContext('widget-edit', change);
                 },
                 onTooltip: showTooltip,
-                onExpandedChanged: (expanded) => {
-                    trackConfigUiEvent(expanded ? 'expand' : 'collapse', {
-                        tool_name: GET_CONFIG_TOOL_NAME,
-                        expanded,
-                    });
-                },
             });
             markReady();
         });
@@ -903,7 +814,7 @@ export function bootstrapConfigEditorApp(): void {
     scheduleRender();
 
     const app = new App(
-        { name: 'Desktop Commander Config Editor', version: '1.0.0' },
+        { name: 'SGG Local MCP Config Editor', version: '1.0.0' },
         {},
         { autoResize: true },
     );

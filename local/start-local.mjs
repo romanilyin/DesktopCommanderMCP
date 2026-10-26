@@ -3,7 +3,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { installResponseGuard } from './response-guard.mjs';
 
 export function localMcpEnvironment(environment, executable = process.execPath) {
-  const env = { ...environment, DESKTOP_COMMANDER_DISABLE_TELEMETRY: '1' };
+  const env = { ...environment };
   // Windows environment names are case insensitive; strip every spelling.
   for (const key of Object.keys(env)) {
     if (['CONTROL_PLANE_API_KEY', 'OPENAI_ADMIN_KEY'].includes(key.toUpperCase())) delete env[key];

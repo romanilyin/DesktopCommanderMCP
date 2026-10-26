@@ -1,5 +1,6 @@
 .git
 .gitignore
+.local/
 .DS_Store
 .history
 .idea
@@ -8,4 +9,3 @@ tsconfig.json
 *.log
 work/
 config.json
-setup-claude-server.js

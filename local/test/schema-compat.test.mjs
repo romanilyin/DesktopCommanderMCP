@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { zodToJsonSchema } from '../../dist/utils/json-schema.js';
 import { detectUnsupportedParams, getSupportedParams } from '../../dist/utils/unsupportedParams.js';
 import { toolArgSchemas, ReadFileArgsSchema, WriteFileArgsSchema, WritePdfArgsSchema,
-  EditBlockArgsSchema, TrackUiEventArgsSchema } from '../../dist/tools/schemas.js';
+  EditBlockArgsSchema } from '../../dist/tools/schemas.js';
 
 const ajv = new Ajv({ strict: false });
 
@@ -38,8 +38,6 @@ test('PDF preprocessing and edit refinements retain their runtime and JSON contr
   assert.equal(EditBlockArgsSchema.safeParse({ file_path: 'fixture.txt' }).success, false);
   assert.equal(EditBlockArgsSchema.safeParse({ file_path: 'fixture.txt', old_string: 'a', new_string: '' }).success, true);
   assert.equal(EditBlockArgsSchema.safeParse({ file_path: 'fixture.xlsx', range: 'A1', content: [[1]] }).success, true);
-  assert.deepEqual(TrackUiEventArgsSchema.parse({ event: 'opened', params: { count: 1, text: 'ok', flag: true, nil: null } }).params,
-    { count: 1, text: 'ok', flag: true, nil: null });
 });
 
 test('unsupported parameter warnings survive Zod 4 wrappers and refinements', () => {

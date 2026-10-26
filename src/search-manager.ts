@@ -2,7 +2,6 @@ import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs/promises';
 import { validatePath } from './tools/filesystem.js';
-import { capture } from './utils/capture.js';
 import { getRipgrepPath } from './utils/ripgrep-resolver.js';
 import { isExcelFile } from './utils/files/index.js';
 import PizZip from 'pizzip';
@@ -138,15 +137,6 @@ export interface SearchSessionOptions {
       }
     });
 
-    capture('search_session_started', {
-      sessionId,
-      searchType: options.searchType,
-      hasTimeout: !!timeoutMs,
-      timeoutMs,
-      requestedPath: options.rootPath,
-      validatedPath: validPath
-    });
-
     // For content searches, only search Excel files when contextually relevant:
     // - filePattern explicitly targets Excel files (*.xlsx, *.xls, etc.)
     // - or rootPath is an Excel file itself
@@ -168,8 +158,7 @@ export interface SearchSessionOptions {
           session.totalMatches++;
         }
       }).catch((err) => {
-        // Log Excel search errors but don't fail the whole search
-        capture('excel_search_error', { error: err instanceof Error ? err.message : String(err) });
+        console.error('Supplemental Excel search failed:', err);
       });
     }
 
@@ -191,7 +180,7 @@ export interface SearchSessionOptions {
           session.totalMatches++;
         }
       }).catch((err) => {
-        capture('docx_search_error', { error: err instanceof Error ? err.message : String(err) });
+        console.error('Supplemental DOCX search failed:', err);
       });
     }
 
@@ -821,8 +810,7 @@ export interface SearchSessionOptions {
     process.stderr?.on('data', (data: Buffer) => {
       const errorText = data.toString();
 
-      // Store error text for potential user display, but don't capture individual errors
-      // We'll capture incomplete search status in the completion event instead
+      // Store error text locally so the caller can diagnose incomplete searches.
       session.error = (session.error || '') + errorText;
 
       // Filter meaningful errors
@@ -845,10 +833,6 @@ export interface SearchSessionOptions {
         const meaningfulErrors = filteredErrors.join('\n').trim();
         if (meaningfulErrors) {
           session.error = (session.error || '') + meaningfulErrors + '\n';
-          capture('search_session_error', {
-            sessionId: session.id,
-            error: meaningfulErrors.substring(0, 200)
-          });
         }
       }
     });
@@ -883,15 +867,6 @@ export interface SearchSessionOptions {
       if (session.totalMatches > 0) {
         session.isError = false;
       }
-
-      capture('search_session_completed', {
-        sessionId: session.id,
-        exitCode: code,
-        totalResults: session.totalMatches + session.totalContextLines,
-        totalMatches: session.totalMatches,
-        runtime: Date.now() - session.startTime,
-        wasIncomplete: session.wasIncomplete || false  // NEW: Track incomplete searches
-      });
 
       // Rely on cleanupSessions(maxAge) only; no per-session timer
     });
