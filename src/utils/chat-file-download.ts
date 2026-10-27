@@ -29,11 +29,12 @@ export function isPublicAddress(address: string): boolean {
 export function validateSourceUrl(value: string): URL {
     let url: URL;
     try { url = new URL(value); } catch { throw new TransferError('SOURCE_NOT_ALLOWED'); }
-    // Both hosts were observed in real file-param handoffs: Codex used the CDN,
-    // web ChatGPT used this exact Azure storage account. Do not allow all Azure
+    // These hosts were observed in real file-param handoffs: Codex used the CDN,
+    // web ChatGPT used these exact Azure storage accounts. Do not allow all Azure
     // tenants; unrelated accounts share blob.core.windows.net.
     const allowedHost = url.hostname.endsWith('.oaiusercontent.com') ||
-        url.hostname === 'oaisdmntprdenmarkeast.blob.core.windows.net';
+        url.hostname === 'oaisdmntprdenmarkeast.blob.core.windows.net' ||
+        url.hostname === 'oaisdmntprnortheu.blob.core.windows.net';
     if (url.protocol !== 'https:' || url.username || url.password || url.hash ||
         (url.port && url.port !== '443') || !allowedHost ||
         !/^[a-z0-9.-]+$/.test(url.hostname)) throw new TransferError('SOURCE_NOT_ALLOWED');
