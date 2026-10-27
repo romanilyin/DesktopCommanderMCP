@@ -18,6 +18,7 @@ $profileDir = Join-Path $stateDir 'profiles'
 $tunnelStateDir = Join-Path $stateDir 'tunnel'
 New-Item -ItemType Directory -Force -Path $profileDir,$tunnelStateDir | Out-Null
 $oldStateDir = $env:TUNNEL_CLIENT_STATE_DIR
+$oldInitializedNotification = $env:MCP_STDIO_SEND_INITIALIZED_NOTIFICATION
 $env:TUNNEL_CLIENT_STATE_DIR = $tunnelStateDir
 try {
     if ($Action -eq 'Status') {
@@ -46,6 +47,9 @@ try {
             if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { throw "Missing launcher: $launcher" }
             if ($launcher -match '["\r\n]') { throw 'Launcher path contains unsupported characters.' }
             $mcpCommand = '"' + $config.nodePath.Replace('\','/') + '" "' + $launcher.Replace('\','/') + '"'
+            # Complete the required notification before another caller can use the
+            # shared child. The tunnel still requires a successful caller initialize.
+            $env:MCP_STDIO_SEND_INITIALIZED_NOTIFICATION = 'true'
             & $config.tunnelClientPath runtimes connect --alias $config.alias --profile $config.alias --profile-dir $profileDir --runtime-api-key 'env:CONTROL_PLANE_API_KEY' --mcp-command $mcpCommand --tunnel-id $config.tunnelId --json
             Assert-ExitCode 'tunnel connect'
         }
@@ -57,4 +61,6 @@ try {
 } finally {
     if ($null -eq $oldStateDir) { Remove-Item Env:TUNNEL_CLIENT_STATE_DIR -ErrorAction SilentlyContinue }
     else { $env:TUNNEL_CLIENT_STATE_DIR = $oldStateDir }
+    if ($null -eq $oldInitializedNotification) { Remove-Item Env:MCP_STDIO_SEND_INITIALIZED_NOTIFICATION -ErrorAction SilentlyContinue }
+    else { $env:MCP_STDIO_SEND_INITIALIZED_NOTIFICATION = $oldInitializedNotification }
 }
