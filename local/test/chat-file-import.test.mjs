@@ -5,7 +5,7 @@ import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import sharp from 'sharp';
 import { createChatFileImporter, importChatFileTool, getChatFileTransferTool, validateDestinationSyntax } from '../../dist/tools/chat-file-import.js';
-import { isPublicAddress, validateSourceUrl, withAbort } from '../../dist/utils/chat-file-download.js';
+import { isPublicAddress, validateSourceUrl, withAbort, TransferError } from '../../dist/utils/chat-file-download.js';
 
 const root = path.resolve('.local/tmp');
 const png = await sharp({ create: { width: 17, height: 13, channels: 4, background: { r: 23, g: 70, b: 190, alpha: 0.4 } } }).png().toBuffer();
@@ -171,6 +171,53 @@ test('URL policy rejects arbitrary hosts, userinfo, non-HTTPS, local addresses a
   assert.equal(isPublicAddress('8.8.8.8'), true);
   assert.equal(isPublicAddress('2606:4700:4700::1111'), true);
 });
+
+test('source rejection names only the parsed host and leaves pre-receipt status unknown', () => fixture(async t => {
+  const host = 'unapproved.blob.core.windows.net';
+  const result = await t.importer.save({ ...t.input, file: { ...file,
+    download_url: `https://${secret}:${secret}@${host}/${secret}?sig=${secret}#${secret}` } });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.code, 'SOURCE_NOT_ALLOWED');
+  assert.equal(result.structuredContent.source_host, host);
+  assert.equal(result.structuredContent.status, 'unknown');
+  assert.ok(result.content[0].text.includes(`source_host: ${host}`));
+  assert.equal(JSON.stringify(result).includes(secret), false);
+  assert.equal(t.requests(), 0);
+  assert.equal((await t.importer.get({ transfer_id: t.input.transfer_id })).structuredContent.status, 'unknown');
+  await assert.rejects(fs.stat(t.input.destination_path), { code: 'ENOENT' });
+}));
+
+test('a rejected redirect host survives the error response and durable failed status without signed URLs', () => fixture(async t => {
+  const result = await t.importer.save(t.input);
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.code, 'SOURCE_NOT_ALLOWED');
+  assert.equal(result.structuredContent.source_host, 'redirect-denied.test');
+  assert.equal(result.structuredContent.status, 'failed');
+  assert.ok(result.content[0].text.includes('source_host: redirect-denied.test'));
+  const restarted = createChatFileImporter(t.options);
+  const status = await restarted.get({ transfer_id: t.input.transfer_id });
+  assert.equal(status.structuredContent.source_host, 'redirect-denied.test');
+  assert.equal(status.structuredContent.code, 'SOURCE_NOT_ALLOWED');
+  for (const data of [JSON.stringify(result), JSON.stringify(status),
+    await fs.readFile(path.join(t.state, t.input.transfer_id + '.json'), 'utf8')]) {
+    assert.equal(data.includes(secret), false);
+    assert.equal(data.includes('https://'), false);
+  }
+  await assert.rejects(fs.stat(t.input.destination_path), { code: 'ENOENT' });
+  assert.ok(!(await fs.readdir(t.dir)).some(name => name.endsWith('.part')));
+}, { download: async () => { throw new TransferError('SOURCE_NOT_ALLOWED',
+  new URL(`https://${secret}:${secret}@redirect-denied.test/${secret}?sig=${secret}#${secret}`)); } }));
+
+test('unparseable URLs and oversized or unsafe hostname diagnostics disclose no raw source', () => fixture(async t => {
+  const result = await t.importer.save({ ...t.input, file: { ...file, download_url: secret } });
+  assert.equal(result.structuredContent.code, 'SOURCE_NOT_ALLOWED');
+  assert.equal(result.structuredContent.source_host, undefined);
+  assert.equal(JSON.stringify(result).includes(secret), false);
+  const tooLong = new TransferError('SOURCE_NOT_ALLOWED', new URL(`https://${'a'.repeat(254)}.test/x`));
+  assert.equal(tooLong.sourceHost, undefined);
+  const unsafe = new TransferError('SOURCE_NOT_ALLOWED', new URL(`file:///${secret}`));
+  assert.equal(unsafe.sourceHost, undefined);
+}));
 
 test('Windows alternate streams, UNC, device paths, reserved names and relative paths are rejected', () => {
   for (const name of ['relative.png', 'C:relative.png', '\\\\server\\share\\x.png', '\\\\?\\C:\\x.png',

@@ -25,6 +25,7 @@ const resultSchema = {
         transfer_id: { type: 'string' }, status: { type: 'string', enum: ['saved', 'already_saved', 'in_progress', 'failed', 'unknown', 'needs_verification'] },
         computer_name: { type: 'string' }, destination_path: { type: 'string' },
         bytes: { type: 'integer' }, mime_type: { type: 'string' }, sha256: { type: 'string' }, code: { type: 'string' },
+        source_host: { type: 'string' },
     }, required: ['transfer_id', 'status', 'computer_name'], additionalProperties: false,
 };
 export const importChatFileTool = {
@@ -53,7 +54,7 @@ export const getChatFileTransferTool = {
 
 type Receipt = {
     transfer_id: string; status: 'in_progress' | 'prepared' | 'saved' | 'failed'; binding: string;
-    destination_path: string; bytes?: number; mime_type?: string; sha256?: string; code?: string;
+    destination_path: string; bytes?: number; mime_type?: string; sha256?: string; code?: string; source_host?: string;
 };
 type Options = {
     stateDirectory: string; validatePath: (p: string) => Promise<string>;
@@ -62,8 +63,12 @@ type Options = {
 const response = (data: Record<string, unknown>): ServerResult => ({
     content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data,
 });
-const failure = (code: string): ServerResult => ({ isError: true, content: [{ type: 'text', text:
-    `${code}: No successful import is confirmed. Check get_chat_file_transfer before retrying. `
+const failure = (code: string, details?: { transfer_id: string; status: string; source_host?: string }): ServerResult => ({
+    isError: true,
+    ...(details ? { structuredContent: { ...details, code, computer_name: os.hostname() } } : {}),
+    content: [{ type: 'text', text:
+    `${code}${details?.source_host ? ` (source_host: ${details.source_host})` : ''}: `
+    + 'No successful import is confirmed. Check get_chat_file_transfer before retrying. '
     + 'For SOURCE_UNAVAILABLE, select the file again in ChatGPT to obtain a fresh link. Existing files are never overwritten.',
 }] });
 
@@ -231,11 +236,16 @@ export function createChatFileImporter(options: Options) {
         } catch (e) {
             const code = controller.signal.aborted ? 'TRANSFER_TIMEOUT' : e instanceof TransferError ? e.code :
                 (e as NodeJS.ErrnoException).code === 'EEXIST' ? 'DESTINATION_EXISTS' : 'TRANSFER_FAILED';
+            const sourceHost = !controller.signal.aborted && e instanceof TransferError ? e.sourceHost : undefined;
             if (owns && receipt && !published) {
                 receipt.status = 'failed'; receipt.code = code;
+                if (sourceHost) receipt.source_host = sourceHost;
                 await persist(receipt).catch(() => {});
             }
-            return failure(published ? 'VERIFY_SAVED_FILE' : code);
+            return failure(published ? 'VERIFY_SAVED_FILE' : code, !published && (sourceHost || code === 'SOURCE_NOT_ALLOWED') ? {
+                transfer_id, status: owns ? 'failed' : 'unknown',
+                ...(sourceHost ? { source_host: sourceHost } : {}),
+            } : undefined);
         } finally {
             clearTimeout(timer);
             if (owns) active.delete(transfer_id);

@@ -85,7 +85,7 @@ test(`${host} rejects credentials, fragments and non-HTTPS/default ports before 
 test(`${host} rejects mixed public/private DNS answers before HTTPS`, async t => {
   const calls = network(t, [], [{ address: '8.8.8.8', family: 4 }, { address: '127.0.0.1', family: 4 }]);
   await assert.rejects(downloadChatFile(`https://${host}/test`,
-    new AbortController().signal, 100, async () => {}), /SOURCE_NOT_ALLOWED/);
+    new AbortController().signal, 100, async () => {}), { code: 'SOURCE_NOT_ALLOWED', sourceHost: host });
   assert.equal(calls(), 0);
 });
 
@@ -101,7 +101,9 @@ test(`redirect to the exact host ${host} retains the validated download path`, a
 test(`redirect to a lookalike of ${host} is never requested`, async t => {
   const calls = network(t, [{ status: 302,
     headers: { location: `https://${host}.attacker.test/test` } }]);
-  await assert.rejects(downloadChatFile(url, new AbortController().signal, 100, async () => {}), /SOURCE_NOT_ALLOWED/);
+  await assert.rejects(downloadChatFile(url, new AbortController().signal, 100, async () => {}), {
+    code: 'SOURCE_NOT_ALLOWED', sourceHost: `${host}.attacker.test`,
+  });
   assert.equal(calls(), 1);
 });
 }
@@ -120,7 +122,12 @@ test('redirect target is revalidated and arbitrary host is never contacted', asy
 
 test('403 returns fixed unavailable code with no retry or secret-bearing exception', async t => {
   const calls = network(t, [{ status: 403 }]);
-  await assert.rejects(downloadChatFile(url, new AbortController().signal, 10, async () => {}), /SOURCE_UNAVAILABLE/);
+  await assert.rejects(downloadChatFile(url, new AbortController().signal, 10, async () => {}), error => {
+    assert.equal(error.code, 'SOURCE_UNAVAILABLE');
+    assert.equal(error.sourceHost, new URL(url).hostname);
+    assert.equal(JSON.stringify(error).includes('TEST_SECRET'), false);
+    return true;
+  });
   assert.equal(calls(), 1);
 });
 

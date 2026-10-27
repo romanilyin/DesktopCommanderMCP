@@ -4,7 +4,13 @@ import { BlockList, isIP } from 'node:net';
 import type { IncomingMessage } from 'node:http';
 
 export class TransferError extends Error {
-    constructor(public readonly code: string) { super(code); }
+    public readonly sourceHost?: string;
+    constructor(public readonly code: string, sourceUrl?: URL) {
+        super(code);
+        // Report only a bounded, parsed hostname, never URL credentials/path/query.
+        const host = sourceUrl?.hostname;
+        if (host && host.length <= 253 && /^[a-z0-9.-]+$/.test(host)) this.sourceHost = host;
+    }
 }
 
 const blocked = new BlockList();
@@ -38,7 +44,7 @@ export function validateSourceUrl(value: string): URL {
         url.hostname === 'oaisdmntprindiasocentral.blob.core.windows.net';
     if (url.protocol !== 'https:' || url.username || url.password || url.hash ||
         (url.port && url.port !== '443') || !allowedHost ||
-        !/^[a-z0-9.-]+$/.test(url.hostname)) throw new TransferError('SOURCE_NOT_ALLOWED');
+        !/^[a-z0-9.-]+$/.test(url.hostname)) throw new TransferError('SOURCE_NOT_ALLOWED', url);
     return url;
 }
 
@@ -54,7 +60,7 @@ export function withAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> 
 async function requestFile(url: URL, signal: AbortSignal): Promise<IncomingMessage> {
     const addresses = await withAbort(dns.lookup(url.hostname, { all: true, verbatim: true }), signal);
     if (!addresses.length || addresses.some(({ address }) => !isPublicAddress(address))) {
-        throw new TransferError('SOURCE_NOT_ALLOWED');
+        throw new TransferError('SOURCE_NOT_ALLOWED', url);
     }
     const selected = addresses.find(a => a.family === 4) ?? addresses[0];
     return new Promise((resolve, reject) => {
@@ -85,12 +91,15 @@ export async function downloadChatFile(
             response.destroy();
             if (!location || redirects === 3) throw new TransferError('DOWNLOAD_FAILED');
             try { url = validateSourceUrl(new URL(location, url).href); }
-            catch { throw new TransferError('SOURCE_NOT_ALLOWED'); }
+            catch (error) {
+                if (error instanceof TransferError) throw error;
+                throw new TransferError('SOURCE_NOT_ALLOWED');
+            }
             continue;
         }
         if (status !== 200) {
             response.destroy();
-            throw new TransferError([401, 403, 404, 410].includes(status) ? 'SOURCE_UNAVAILABLE' : 'DOWNLOAD_FAILED');
+            throw new TransferError([401, 403, 404, 410].includes(status) ? 'SOURCE_UNAVAILABLE' : 'DOWNLOAD_FAILED', url);
         }
         const length = response.headers['content-length'];
         if ((length !== undefined && (!/^\d+$/.test(length) || Number(length) > maxBytes)) ||
