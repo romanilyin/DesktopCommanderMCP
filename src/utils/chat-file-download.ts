@@ -34,7 +34,8 @@ export function validateSourceUrl(value: string): URL {
     // tenants; unrelated accounts share blob.core.windows.net.
     const allowedHost = url.hostname.endsWith('.oaiusercontent.com') ||
         url.hostname === 'oaisdmntprdenmarkeast.blob.core.windows.net' ||
-        url.hostname === 'oaisdmntprnortheu.blob.core.windows.net';
+        url.hostname === 'oaisdmntprnortheu.blob.core.windows.net' ||
+        url.hostname === 'oaisdmntprindiasocentral.blob.core.windows.net';
     if (url.protocol !== 'https:' || url.username || url.password || url.hash ||
         (url.port && url.port !== '443') || !allowedHost ||
         !/^[a-z0-9.-]+$/.test(url.hostname)) throw new TransferError('SOURCE_NOT_ALLOWED');

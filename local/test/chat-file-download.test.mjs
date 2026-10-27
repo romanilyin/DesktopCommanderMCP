@@ -7,13 +7,15 @@ import { Readable } from 'node:stream';
 import { downloadChatFile } from '../../dist/utils/chat-file-download.js';
 
 const url = 'https://sdmntprdenmarkeast.oaiusercontent.com/test?sig=TEST_SECRET';
+const azureHosts = ['oaisdmntprdenmarkeast.blob.core.windows.net',
+  'oaisdmntprnortheu.blob.core.windows.net', 'oaisdmntprindiasocentral.blob.core.windows.net'];
 function network(t, replies, addresses = [{ address: '8.8.8.8', family: 4 }]) {
   let calls = 0;
   t.mock.method(dns, 'lookup', async () => addresses);
   t.mock.method(https, 'get', (source, options, done) => {
     const reply = replies[calls++];
     assert.ok(source.hostname.endsWith('.oaiusercontent.com') ||
-      ['oaisdmntprdenmarkeast.blob.core.windows.net', 'oaisdmntprnortheu.blob.core.windows.net'].includes(source.hostname));
+      azureHosts.includes(source.hostname));
     assert.equal(options.agent, false);
     assert.equal(options.headers.Cookie, undefined);
     assert.equal(options.headers.Authorization, undefined);
@@ -40,7 +42,7 @@ test('HTTPS downloader pins validated DNS and streams exact bytes', async t => {
   assert.equal(Buffer.concat(result).toString(), 'abcdef'); assert.equal(calls(), 1);
 });
 
-for (const host of ['oaisdmntprdenmarkeast.blob.core.windows.net', 'oaisdmntprnortheu.blob.core.windows.net']) {
+for (const host of azureHosts) {
 test(`observed web ChatGPT Azure source ${host} retains DNS and TLS controls`, async t => {
   const calls = network(t, [{ chunks: [Buffer.from('azure-image')] }]);
   const result = [];
@@ -57,7 +59,9 @@ test('unrelated Azure accounts and source-host lookalikes are rejected before DN
   for (const host of ['unrelated.blob.core.windows.net', 'oaisdmntprdenmarkeast.blob.core.windows.net.attacker.test',
     'sub.oaisdmntprdenmarkeast.blob.core.windows.net', 'oaisdmntprdenmarkeast-evil.blob.core.windows.net',
     'oaisdmntprnortheu.blob.core.windows.net.attacker.test', 'sub.oaisdmntprnortheu.blob.core.windows.net',
-    'oaisdmntprnortheu-evil.blob.core.windows.net']) {
+    'oaisdmntprnortheu-evil.blob.core.windows.net',
+    'oaisdmntprindiasocentral.blob.core.windows.net.attacker.test', 'sub.oaisdmntprindiasocentral.blob.core.windows.net',
+    'oaisdmntprindiasocentral-evil.blob.core.windows.net', 'oaisdmntprindiasocentral.blob.core.windows.net.']) {
     await assert.rejects(downloadChatFile(`https://${host}/test?sig=TEST_SECRET`,
       new AbortController().signal, 100, async () => {}), /SOURCE_NOT_ALLOWED/);
   }
@@ -65,10 +69,10 @@ test('unrelated Azure accounts and source-host lookalikes are rejected before DN
   assert.equal(request.mock.callCount(), 0);
 });
 
-test('new Azure source still rejects credentials, fragments and non-HTTPS/default ports before network access', async t => {
+for (const host of azureHosts.slice(1)) {
+test(`${host} rejects credentials, fragments and non-HTTPS/default ports before network access`, async t => {
   const lookup = t.mock.method(dns, 'lookup', () => { throw new Error('must not resolve'); });
   const request = t.mock.method(https, 'get', () => { throw new Error('must not request'); });
-  const host = 'oaisdmntprnortheu.blob.core.windows.net';
   for (const source of [`http://${host}/test`, `https://${host}:8443/test`,
     `https://user:password@${host}/test`, `https://${host}/test#fragment`,
     `https://${host}@attacker.test/test`]) {
@@ -78,15 +82,15 @@ test('new Azure source still rejects credentials, fragments and non-HTTPS/defaul
   assert.equal(request.mock.callCount(), 0);
 });
 
-test('new Azure source rejects mixed public/private DNS answers before HTTPS', async t => {
+test(`${host} rejects mixed public/private DNS answers before HTTPS`, async t => {
   const calls = network(t, [], [{ address: '8.8.8.8', family: 4 }, { address: '127.0.0.1', family: 4 }]);
-  await assert.rejects(downloadChatFile('https://oaisdmntprnortheu.blob.core.windows.net/test',
+  await assert.rejects(downloadChatFile(`https://${host}/test`,
     new AbortController().signal, 100, async () => {}), /SOURCE_NOT_ALLOWED/);
   assert.equal(calls(), 0);
 });
 
-test('redirect to the exact new Azure host retains the validated download path', async t => {
-  const calls = network(t, [{ status: 302, headers: { location: 'https://oaisdmntprnortheu.blob.core.windows.net/test' } },
+test(`redirect to the exact host ${host} retains the validated download path`, async t => {
+  const calls = network(t, [{ status: 302, headers: { location: `https://${host}/test` } },
     { chunks: [Buffer.from('redirected-image')] }]);
   const result = [];
   await downloadChatFile(url, new AbortController().signal, 100, async chunk => result.push(chunk));
@@ -94,12 +98,13 @@ test('redirect to the exact new Azure host retains the validated download path',
   assert.equal(calls(), 2);
 });
 
-test('redirect to a lookalike of the new Azure source is never requested', async t => {
+test(`redirect to a lookalike of ${host} is never requested`, async t => {
   const calls = network(t, [{ status: 302,
-    headers: { location: 'https://oaisdmntprnortheu.blob.core.windows.net.attacker.test/test' } }]);
+    headers: { location: `https://${host}.attacker.test/test` } }]);
   await assert.rejects(downloadChatFile(url, new AbortController().signal, 100, async () => {}), /SOURCE_NOT_ALLOWED/);
   assert.equal(calls(), 1);
 });
+}
 
 test('private DNS result is refused before any request', async t => {
   const calls = network(t, [], [{ address: '127.0.0.1', family: 4 }]);
