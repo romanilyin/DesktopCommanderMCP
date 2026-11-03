@@ -99,6 +99,7 @@ const actions: Record<string, string> = {
     reselect_attachment: 'Select the attachment again in ChatGPT.',
     check_source_dns: 'Check DNS for the reported host.',
     provide_valid_transfer_id: 'Supply a valid, unused ID for a new transfer.',
+    provide_original_transfer_id: 'Use the original valid transfer ID of the import you want to check.',
     free_disk_space: 'Free disk space on the affected volume.',
     check_receipt_store: 'Check the local transfer receipt directory and its permissions.',
     inspect_timed_out_stage: 'Inspect the stage, elapsed time and byte count below.',
@@ -118,8 +119,9 @@ export function reply(tool: ChatTool, fields: Record<string, unknown>): ServerRe
 
 export function diagnostic(tool: ChatTool, id: string | undefined, status: Status, outcome: SaveOutcome,
     facts: FailureFacts, opts: { isError?: boolean; replay?: boolean; destination_path?: string } = {}): ServerResult {
-    const next_action = nextAction(facts, outcome, status);
-    const retry_policy = status === 'needs_verification' ? 'check_same_id_before_retry'
+    const invalidLookupId = tool === 'get_chat_file_transfer' && facts.reason === 'INVALID_TRANSFER_ID';
+    const next_action = invalidLookupId ? 'provide_original_transfer_id' : nextAction(facts, outcome, status);
+    const retry_policy = invalidLookupId ? 'query_original_valid_id' : status === 'needs_verification' ? 'check_same_id_before_retry'
         : status === 'failed' ? 'new_id_after_fix'
         : !id || facts.code === 'TRANSFER_ID_CONFLICT' ? 'provide_new_valid_id' : 'same_id_after_fix_for_same_file_and_path';
     const data = { ...facts, ...identity(tool), ...(id ? { transfer_id: id } : {}),

@@ -297,6 +297,10 @@ test('malformed transfer ID has structured diagnostics but is not echoed', () =>
   const data = checkDiagnostics(result, 'get_chat_file_transfer', undefined);
   assert.equal(data.stage, 'input_validation');
   assert.equal(data.code, 'INVALID_TRANSFER_ID');
+  assert.equal(data.next_action, 'provide_original_transfer_id');
+  assert.equal(data.retry_policy, 'query_original_valid_id');
+  assert.match(result.content[0].text, /original valid transfer ID/);
+  assert.doesNotMatch(result.content[0].text, /new transfer|unused ID/);
 }));
 
 test('failure to finalize receipt after publication reports a recoverable saved file', suite => fixture(async t => {
