@@ -9,7 +9,8 @@ import { downloadChatFile } from '../../dist/utils/chat-file-download.js';
 const url = 'https://sdmntprdenmarkeast.oaiusercontent.com/test?sig=TEST_SECRET';
 const azureHosts = ['oaisdmntprdenmarkeast.blob.core.windows.net',
   'oaisdmntprnortheu.blob.core.windows.net', 'oaisdmntprindiasocentral.blob.core.windows.net',
-  'oaisdmntprcentralus.blob.core.windows.net'];
+  'oaisdmntprcentralus.blob.core.windows.net', 'oaisdmntprukwest.blob.core.windows.net',
+  'oaisdmntprpolandcentral.blob.core.windows.net'];
 function network(t, replies, addresses = [{ address: '8.8.8.8', family: 4 }]) {
   let calls = 0;
   t.mock.method(dns, 'lookup', async () => addresses);
@@ -64,7 +65,11 @@ test('unrelated Azure accounts and source-host lookalikes are rejected before DN
     'oaisdmntprindiasocentral.blob.core.windows.net.attacker.test', 'sub.oaisdmntprindiasocentral.blob.core.windows.net',
     'oaisdmntprindiasocentral-evil.blob.core.windows.net', 'oaisdmntprindiasocentral.blob.core.windows.net.',
     'oaisdmntprcentralus.blob.core.windows.net.attacker.test', 'sub.oaisdmntprcentralus.blob.core.windows.net',
-    'oaisdmntprcentralus-evil.blob.core.windows.net', 'oaisdmntprcentralus.blob.core.windows.net.']) {
+    'oaisdmntprcentralus-evil.blob.core.windows.net', 'oaisdmntprcentralus.blob.core.windows.net.',
+    'oaisdmntprukwest.blob.core.windows.net.attacker.test', 'sub.oaisdmntprukwest.blob.core.windows.net',
+    'oaisdmntprukwest-evil.blob.core.windows.net', 'oaisdmntprukwest.blob.core.windows.net.',
+    'oaisdmntprpolandcentral.blob.core.windows.net.attacker.test', 'sub.oaisdmntprpolandcentral.blob.core.windows.net',
+    'oaisdmntprpolandcentral-evil.blob.core.windows.net', 'oaisdmntprpolandcentral.blob.core.windows.net.']) {
     await assert.rejects(downloadChatFile(`https://${host}/test?sig=TEST_SECRET`,
       new AbortController().signal, 100, async () => {}), /SOURCE_NOT_ALLOWED/);
   }

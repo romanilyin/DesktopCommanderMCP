@@ -44,8 +44,10 @@
   и анимированных контейнеров. Новых зависимостей нет.
 - HTTPS только на поддоменах `oaiusercontent.com` и на точных адресах
   `oaisdmntprdenmarkeast.blob.core.windows.net`, `oaisdmntprnortheu.blob.core.windows.net`,
-  `oaisdmntprindiasocentral.blob.core.windows.net` и `oaisdmntprcentralus.blob.core.windows.net`,
-  подтверждённых файловыми пробниками из веб-ChatGPT. Произвольные Azure storage accounts запрещены.
+  `oaisdmntprindiasocentral.blob.core.windows.net`, `oaisdmntprcentralus.blob.core.windows.net`,
+  `oaisdmntprukwest.blob.core.windows.net` и `oaisdmntprpolandcentral.blob.core.windows.net`.
+  Список дополнен по результатам файловых пробников из веб-ChatGPT и запросам пользователя.
+  Произвольные Azure storage accounts запрещены.
   Это локальная политика первого выпуска, не обещание полного перечня
   CDN OpenAI. Каждый redirect повторно проверяется; DNS должен разрешаться только
   в публичные адреса, подключение закрепляется за проверенным IP с обычной TLS-проверкой.
