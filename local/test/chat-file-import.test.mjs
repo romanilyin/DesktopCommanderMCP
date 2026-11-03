@@ -4,11 +4,30 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import sharp from 'sharp';
+import Ajv from 'ajv';
+import { BUILD_REVISION } from '../../dist/utils/build-revision.js';
 import { createChatFileImporter, importChatFileTool, getChatFileTransferTool, validateDestinationSyntax } from '../../dist/tools/chat-file-import.js';
 import { isPublicAddress, validateSourceUrl, withAbort, TransferError } from '../../dist/utils/chat-file-download.js';
 
 const root = path.resolve('.local/tmp');
 const png = await sharp({ create: { width: 17, height: 13, channels: 4, background: { r: 23, g: 70, b: 190, alpha: 0.4 } } }).png().toBuffer();
+const schemaFor = new Map([importChatFileTool, getChatFileTransferTool].map(tool =>
+  [tool.name, new Ajv({ strict: false }).compile(tool.outputSchema)]));
+function checkDiagnostics(result, tool, transferId) {
+  const data = result.structuredContent;
+  const validate = schemaFor.get(tool);
+  assert.ok(validate(data), JSON.stringify(validate.errors));
+  assert.equal(data.tool, tool);
+  assert.equal(data.transfer_id, transferId);
+  assert.equal(data.build_revision, BUILD_REVISION);
+  assert.match(data.build_revision, /^(?:unknown|(?:[0-9a-f]{40}|[0-9a-f]{64})(?:-dirty)?)$/);
+  for (const name of ['computer_name', 'code', 'stage', 'reason', 'next_action', 'save_outcome']) {
+    assert.equal(typeof data[name], 'string', name);
+    assert.ok(data[name].length > 0, name);
+  }
+  assert.ok(!JSON.stringify(result).includes(secret));
+  return data;
+}
 const digest = data => createHash('sha256').update(data).digest('hex');
 const secret = 'FILE_PARAM_SECRET_83d7';
 const file = { download_url: `https://sdmntprdenmarkeast.oaiusercontent.com/${secret}?sig=${secret}`, file_id: secret, mime_type: 'image/png' };
@@ -135,12 +154,25 @@ test('HTML, truncated PNG, MIME-extension mismatch and oversize bodies leave no 
 
 test('deadline remains active while reading the body, removes partial file and redacts errors', () => fixture(async t => {
   const result = await t.importer.save(t.input);
+  assert.equal(result.isError, true);
   assert.match(result.content[0].text, /TRANSFER_TIMEOUT/);
-  assert.equal(JSON.stringify(result).includes(secret), false);
+  const data = checkDiagnostics(result, 'import_chat_file', t.input.transfer_id);
+  assert.equal(data.code, 'TRANSFER_TIMEOUT');
+  assert.equal(data.reason, 'DEADLINE_EXCEEDED');
+  assert.equal(data.stage, 'response_body');
+  assert.equal(data.timeout_ms, 250);
+  assert.ok(Number.isFinite(data.elapsed_ms) && data.elapsed_ms >= 0);
+  assert.equal(data.bytes_received, 30);
+  assert.equal(data.save_outcome, 'not_saved_by_this_call');
+  const lookup = await t.importer.get({ transfer_id: t.input.transfer_id });
+  assert.equal(lookup.isError ?? false, false);
+  assert.equal(checkDiagnostics(lookup, 'get_chat_file_transfer', t.input.transfer_id).reason, 'DEADLINE_EXCEEDED');
   await assert.rejects(fs.stat(t.input.destination_path), { code: 'ENOENT' });
   assert.ok(!(await fs.readdir(t.dir)).some(name => name.endsWith('.part')));
-}, { timeoutMs: 40, download: async (_url, signal, _limit, consume) => {
+}, { timeoutMs: 250, download: async (_url, signal, _limit, consume, progress) => {
+  progress({ stage: 'response_body', bytes_received: 0, source_host: new URL(_url).hostname, redirect_count: 0 });
   await consume(png.subarray(0, 30));
+  progress({ stage: 'response_body', bytes_received: 30, source_host: new URL(_url).hostname, redirect_count: 0 });
   await withAbort(new Promise(() => {}), signal);
 } }));
 
@@ -194,8 +226,20 @@ test('a rejected redirect host survives the error response and durable failed st
   assert.equal(result.structuredContent.source_host, 'redirect-denied.test');
   assert.equal(result.structuredContent.status, 'failed');
   assert.ok(result.content[0].text.includes('source_host: redirect-denied.test'));
-  const restarted = createChatFileImporter(t.options);
+  let replayRequests = 0;
+  const restarted = createChatFileImporter({ ...t.options, download: async () => { replayRequests++; } });
   const status = await restarted.get({ transfer_id: t.input.transfer_id });
+  const replay = await restarted.save(t.input);
+  assert.equal(status.isError ?? false, false, 'successfully read a failed receipt');
+  assert.equal(replay.isError, true, 'replaying that receipt is not a successful import');
+  assert.equal(replayRequests, 0);
+  for (const [answer, tool] of [[result, 'import_chat_file'], [replay, 'import_chat_file'], [status, 'get_chat_file_transfer']]) {
+    const data = checkDiagnostics(answer, tool, t.input.transfer_id);
+    assert.equal(data.stage, 'redirect_validation');
+    assert.equal(data.reason, 'HOST_NOT_ALLOWLISTED');
+    assert.equal(data.redirect_count, 1);
+    assert.equal(data.status, 'failed');
+  }
   assert.equal(status.structuredContent.source_host, 'redirect-denied.test');
   assert.equal(status.structuredContent.code, 'SOURCE_NOT_ALLOWED');
   for (const data of [JSON.stringify(result), JSON.stringify(status),
@@ -206,7 +250,8 @@ test('a rejected redirect host survives the error response and durable failed st
   await assert.rejects(fs.stat(t.input.destination_path), { code: 'ENOENT' });
   assert.ok(!(await fs.readdir(t.dir)).some(name => name.endsWith('.part')));
 }, { download: async () => { throw new TransferError('SOURCE_NOT_ALLOWED',
-  new URL(`https://${secret}:${secret}@redirect-denied.test/${secret}?sig=${secret}#${secret}`)); } }));
+  new URL(`https://${secret}:${secret}@redirect-denied.test/${secret}?sig=${secret}#${secret}`),
+  { stage: 'redirect_validation', reason: 'HOST_NOT_ALLOWLISTED', redirect_count: 1 }); } }));
 
 test('unparseable URLs and oversized or unsafe hostname diagnostics disclose no raw source', () => fixture(async t => {
   const result = await t.importer.save({ ...t.input, file: { ...file, download_url: secret } });
@@ -225,3 +270,54 @@ test('Windows alternate streams, UNC, device paths, reserved names and relative 
     assert.throws(() => validateDestinationSyntax(name, 'win32'), name);
   }
 });
+
+test('unlisted initial host identifies a pre-network rejection and does not consume the ID', () => fixture(async t => {
+  const host = 'unapproved.blob.core.windows.net';
+  const result = await t.importer.save({ ...t.input, file: { ...file,
+    download_url: `https://${host}/${secret}?sig=${secret}` } });
+  assert.equal(result.isError, true);
+  const data = checkDiagnostics(result, 'import_chat_file', t.input.transfer_id);
+  assert.equal(data.code, 'SOURCE_NOT_ALLOWED');
+  assert.equal(data.reason, 'HOST_NOT_ALLOWLISTED');
+  assert.equal(data.stage, 'source_url_validation');
+  assert.equal(data.source_host, host);
+  assert.equal(data.status, 'unknown');
+  assert.equal(data.save_outcome, 'not_saved_by_this_call');
+  assert.equal(data.next_action, 'check_running_build_and_host_allowlist');
+  assert.ok(!result.content[0].text.includes('SOURCE_UNAVAILABLE'));
+  assert.equal(t.requests(), 0);
+  await assert.rejects(fs.stat(path.join(t.state, t.input.transfer_id + '.json')), { code: 'ENOENT' });
+  assert.equal((await t.importer.save(t.input)).structuredContent.status, 'saved');
+  assert.equal(t.requests(), 1);
+}));
+
+test('malformed transfer ID has structured diagnostics but is not echoed', () => fixture(async t => {
+  const result = await t.importer.get({ transfer_id: secret + ' invalid' });
+  assert.equal(result.isError, true);
+  const data = checkDiagnostics(result, 'get_chat_file_transfer', undefined);
+  assert.equal(data.stage, 'input_validation');
+  assert.equal(data.code, 'INVALID_TRANSFER_ID');
+}));
+
+test('failure to finalize receipt after publication reports a recoverable saved file', suite => fixture(async t => {
+  const receiptPath = path.join(t.state, t.input.transfer_id + '.json');
+  const rename = fs.rename.bind(fs);
+  suite.mock.method(fs, 'rename', async (from, to) => {
+    if (to === receiptPath && JSON.parse(await fs.readFile(from, 'utf8')).status === 'saved') {
+      throw Object.assign(new Error(secret), { code: 'EACCES' });
+    }
+    return rename(from, to);
+  });
+  const result = await t.importer.save(t.input);
+  assert.equal(result.isError, true);
+  const data = checkDiagnostics(result, 'import_chat_file', t.input.transfer_id);
+  assert.equal(data.code, 'VERIFY_SAVED_FILE');
+  assert.equal(data.stage, 'receipt_finalize');
+  assert.equal(data.save_outcome, 'published_unverified');
+  assert.equal(data.next_action, 'check_transfer_status');
+  assert.deepEqual(await fs.readFile(t.input.destination_path), png);
+  const status = await createChatFileImporter(t.options).get({ transfer_id: t.input.transfer_id });
+  assert.equal(status.structuredContent.status, 'saved');
+  assert.equal(status.structuredContent.sha256, digest(png));
+  assert.equal(t.requests(), 1);
+}));

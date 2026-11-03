@@ -3,13 +3,25 @@ import https from 'node:https';
 import { BlockList, isIP } from 'node:net';
 import type { IncomingMessage } from 'node:http';
 
+export type TransferDiagnostics = {
+    stage?: string; reason?: string; http_status?: number; redirect_count?: number;
+};
+export type DownloadProgress = {
+    stage: string; source_host?: string; redirect_count?: number; bytes_received?: number;
+};
+type Progress = (update: DownloadProgress) => void;
+
+// Never pass URL credentials, signed paths or queries to the public result.
+function safeHost(url?: URL): string | undefined {
+    const host = url?.hostname;
+    return host && host.length <= 253 && /^[a-z0-9.-]+$/.test(host) ? host : undefined;
+}
+
 export class TransferError extends Error {
     public readonly sourceHost?: string;
-    constructor(public readonly code: string, sourceUrl?: URL) {
+    constructor(public readonly code: string, sourceUrl?: URL, public readonly diagnostics: TransferDiagnostics = {}) {
         super(code);
-        // Report only a bounded, parsed hostname, never URL credentials/path/query.
-        const host = sourceUrl?.hostname;
-        if (host && host.length <= 253 && /^[a-z0-9.-]+$/.test(host)) this.sourceHost = host;
+        this.sourceHost = safeHost(sourceUrl);
     }
 }
 
@@ -32,9 +44,11 @@ export function isPublicAddress(address: string): boolean {
     return version === 6 && globalV6.check(address, 'ipv6') && !blocked.check(address, 'ipv6');
 }
 
-export function validateSourceUrl(value: string): URL {
+export function validateSourceUrl(value: string, stage = 'source_url_validation', redirect_count = 0): URL {
     let url: URL;
-    try { url = new URL(value); } catch { throw new TransferError('SOURCE_NOT_ALLOWED'); }
+    try { url = new URL(value); }
+    catch { throw new TransferError('SOURCE_NOT_ALLOWED', undefined, { stage, reason: 'MALFORMED_URL', redirect_count }); }
+    const reject = (reason: string): never => { throw new TransferError('SOURCE_NOT_ALLOWED', url, { stage, reason, redirect_count }); };
     // These hosts were observed in real file-param handoffs: Codex used the CDN,
     // web ChatGPT used these exact Azure storage accounts. Do not allow all Azure
     // tenants; unrelated accounts share blob.core.windows.net.
@@ -45,14 +59,22 @@ export function validateSourceUrl(value: string): URL {
         url.hostname === 'oaisdmntprcentralus.blob.core.windows.net' ||
         url.hostname === 'oaisdmntprukwest.blob.core.windows.net' ||
         url.hostname === 'oaisdmntprpolandcentral.blob.core.windows.net';
-    if (url.protocol !== 'https:' || url.username || url.password || url.hash ||
-        (url.port && url.port !== '443') || !allowedHost ||
-        !/^[a-z0-9.-]+$/.test(url.hostname)) throw new TransferError('SOURCE_NOT_ALLOWED', url);
+    if (url.protocol !== 'https:') reject('HTTPS_REQUIRED');
+    if (url.username || url.password) reject('URL_CREDENTIALS_FORBIDDEN');
+    if (url.hash) reject('URL_FRAGMENT_FORBIDDEN');
+    if (url.port && url.port !== '443') reject('NONSTANDARD_HTTPS_PORT');
+    if (!/^[a-z0-9.-]+$/.test(url.hostname)) reject('INVALID_HOSTNAME');
+    if (!allowedHost) reject('HOST_NOT_ALLOWLISTED');
     return url;
 }
 
 export function withAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-    if (signal.aborted) return Promise.reject(new TransferError('TRANSFER_TIMEOUT'));
+    if (signal.aborted) {
+        // Callers may already have started native work (e.g. Sharp metadata).
+        // Observe its eventual rejection even though the timeout is returned now.
+        void work.catch(() => {});
+        return Promise.reject(new TransferError('TRANSFER_TIMEOUT'));
+    }
     return new Promise((resolve, reject) => {
         const abort = () => reject(new TransferError('TRANSFER_TIMEOUT'));
         signal.addEventListener('abort', abort, { once: true });
@@ -60,66 +82,104 @@ export function withAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> 
     });
 }
 
-async function requestFile(url: URL, signal: AbortSignal): Promise<IncomingMessage> {
-    const addresses = await withAbort(dns.lookup(url.hostname, { all: true, verbatim: true }), signal);
-    if (!addresses.length || addresses.some(({ address }) => !isPublicAddress(address))) {
-        throw new TransferError('SOURCE_NOT_ALLOWED', url);
+function stageError(code: string, reason: string, stage: string, url: URL, redirect_count: number, http_status?: number) {
+    return new TransferError(code, url, { stage, reason, redirect_count,
+        ...(http_status !== undefined && http_status >= 100 && http_status <= 599 ? { http_status } : {}) });
+}
+
+async function requestFile(url: URL, signal: AbortSignal, redirects: number, progress?: Progress): Promise<IncomingMessage> {
+    const source_host = safeHost(url);
+    progress?.({ stage: 'dns_lookup', source_host, redirect_count: redirects });
+    const timeout = (stage: string) => stageError('TRANSFER_TIMEOUT', 'DEADLINE_EXCEEDED', stage, url, redirects);
+    if (signal.aborted) throw timeout('dns_lookup');
+    const addresses = await withAbort(dns.lookup(url.hostname, { all: true, verbatim: true }), signal).catch(() => {
+        if (signal.aborted) throw timeout('dns_lookup');
+        throw stageError('TRANSFER_FAILED', 'DNS_LOOKUP_FAILED', 'dns_lookup', url, redirects);
+    });
+    if (!addresses.length) throw stageError('SOURCE_NOT_ALLOWED', 'DNS_NO_ADDRESSES', 'dns_lookup', url, redirects);
+    if (addresses.some(({ address }) => !isPublicAddress(address))) {
+        throw stageError('SOURCE_NOT_ALLOWED', 'NON_PUBLIC_ADDRESS', 'dns_lookup', url, redirects);
     }
     const selected = addresses.find(a => a.family === 4) ?? addresses[0];
-    return new Promise((resolve, reject) => {
-        // Pin the validated DNS answer while retaining the original TLS hostname.
-        const request = https.get(url, {
-            agent: false, signal, family: selected.family,
-            lookup: (_hostname, options, callback) => {
-                if (typeof options === 'object' && options.all) callback(null, [selected] as any);
-                else callback(null, selected.address, selected.family);
-            },
-            headers: { Accept: 'image/png, image/jpeg, image/webp', 'Accept-Encoding': 'identity' },
-        }, resolve);
-        request.on('error', () => reject(new TransferError(signal.aborted ? 'TRANSFER_TIMEOUT' : 'DOWNLOAD_FAILED')));
-    });
+    progress?.({ stage: 'http_request', source_host, redirect_count: redirects });
+    try {
+        return await new Promise<IncomingMessage>((resolve, reject) => {
+            // Pin the validated DNS answer while retaining the original TLS hostname.
+            const request = https.get(url, {
+                agent: false, signal, family: selected.family,
+                lookup: (_hostname, options, callback) => {
+                    if (typeof options === 'object' && options.all) callback(null, [selected] as any);
+                    else callback(null, selected.address, selected.family);
+                },
+                headers: { Accept: 'image/png, image/jpeg, image/webp', 'Accept-Encoding': 'identity' },
+            }, resolve);
+            request.on('error', reject);
+        });
+    } catch {
+        if (signal.aborted) throw timeout('http_request');
+        throw stageError('DOWNLOAD_FAILED', 'HTTPS_REQUEST_FAILED', 'http_request', url, redirects);
+    }
 }
 
 /** Consume the body under the same deadline as DNS, redirects and headers. */
 export async function downloadChatFile(
     source: string, signal: AbortSignal, maxBytes: number,
-    consume: (chunk: Buffer) => Promise<void>,
+    consume: (chunk: Buffer) => Promise<void>, progress?: Progress,
 ): Promise<void> {
+    progress?.({ stage: 'source_url_validation', redirect_count: 0 });
     let url = validateSourceUrl(source);
     for (let redirects = 0; redirects <= 3; redirects++) {
-        const response = await requestFile(url, signal);
-        const status = response.statusCode ?? 0;
-        if ([301, 302, 303, 307, 308].includes(status)) {
+        const response = await requestFile(url, signal, redirects, progress);
+        const status = response.statusCode;
+        const source_host = safeHost(url);
+        progress?.({ stage: 'http_response', source_host, redirect_count: redirects });
+        const responseError = (code: string, reason: string) => stageError(code, reason, 'http_response', url, redirects, status);
+        if ([301, 302, 303, 307, 308].includes(status ?? 0)) {
             const location = response.headers.location;
             response.destroy();
-            if (!location || redirects === 3) throw new TransferError('DOWNLOAD_FAILED');
-            try { url = validateSourceUrl(new URL(location, url).href); }
-            catch (error) {
-                if (error instanceof TransferError) throw error;
-                throw new TransferError('SOURCE_NOT_ALLOWED');
-            }
+            if (!location) throw responseError('DOWNLOAD_FAILED', 'REDIRECT_WITHOUT_LOCATION');
+            if (redirects === 3) throw responseError('DOWNLOAD_FAILED', 'REDIRECT_LIMIT_EXCEEDED');
+            progress?.({ stage: 'redirect_validation', redirect_count: redirects + 1 });
+            let target: URL;
+            try { target = new URL(location, url); }
+            catch { throw new TransferError('SOURCE_NOT_ALLOWED', undefined,
+                { stage: 'redirect_validation', reason: 'MALFORMED_URL', redirect_count: redirects + 1, http_status: status }); }
+            url = validateSourceUrl(target.href, 'redirect_validation', redirects + 1);
             continue;
         }
         if (status !== 200) {
             response.destroy();
-            throw new TransferError([401, 403, 404, 410].includes(status) ? 'SOURCE_UNAVAILABLE' : 'DOWNLOAD_FAILED', url);
+            throw responseError([401, 403, 404, 410].includes(status ?? 0) ? 'SOURCE_UNAVAILABLE' : 'DOWNLOAD_FAILED', 'HTTP_STATUS');
         }
         const length = response.headers['content-length'];
-        if ((length !== undefined && (!/^\d+$/.test(length) || Number(length) > maxBytes)) ||
-            (response.headers['content-encoding'] && response.headers['content-encoding'] !== 'identity')) {
-            response.destroy();
-            throw new TransferError('INVALID_SIZE_OR_ENCODING');
-        }
         let bytes = 0;
+        const reportBody = () => progress?.({ stage: 'response_body', source_host, redirect_count: redirects, bytes_received: bytes });
+        const bodyError = (code: string, reason: string) => stageError(code, reason, 'response_body', url, redirects, status);
         try {
-            for await (const raw of response) {
-                signal.throwIfAborted();
-                const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+            if (length !== undefined && !/^\d+$/.test(length)) throw responseError('INVALID_SIZE_OR_ENCODING', 'INVALID_CONTENT_LENGTH');
+            if (length !== undefined && Number(length) > maxBytes) throw responseError('INVALID_SIZE_OR_ENCODING', 'DECLARED_SIZE_EXCEEDED');
+            if (response.headers['content-encoding'] && response.headers['content-encoding'] !== 'identity') {
+                throw responseError('INVALID_SIZE_OR_ENCODING', 'CONTENT_ENCODING_NOT_IDENTITY');
+            }
+            // Keep disk/consumer errors distinct from stream read errors.
+            const stream = response[Symbol.asyncIterator]();
+            while (true) {
+                reportBody();
+                if (signal.aborted) throw bodyError('TRANSFER_TIMEOUT', 'DEADLINE_EXCEEDED');
+                const item = await stream.next().catch(() => {
+                    if (signal.aborted) throw bodyError('TRANSFER_TIMEOUT', 'DEADLINE_EXCEEDED');
+                    throw bodyError('TRANSFER_FAILED', 'RESPONSE_BODY_READ_FAILED');
+                });
+                if (signal.aborted) throw bodyError('TRANSFER_TIMEOUT', 'DEADLINE_EXCEEDED');
+                if (item.done) break;
+                const chunk = Buffer.isBuffer(item.value) ? item.value : Buffer.from(item.value);
                 bytes += chunk.length;
-                if (bytes > maxBytes) throw new TransferError('FILE_TOO_LARGE');
+                reportBody();
+                if (bytes > maxBytes) throw bodyError('FILE_TOO_LARGE', 'STREAM_SIZE_EXCEEDED');
                 await consume(chunk);
             }
-            if (!bytes || (length !== undefined && bytes !== Number(length))) throw new TransferError('INCOMPLETE_DOWNLOAD');
+            if (!bytes) throw bodyError('INCOMPLETE_DOWNLOAD', 'EMPTY_BODY');
+            if (length !== undefined && bytes !== Number(length)) throw bodyError('INCOMPLETE_DOWNLOAD', 'INCOMPLETE_BODY');
             return;
         } finally { response.destroy(); }
     }

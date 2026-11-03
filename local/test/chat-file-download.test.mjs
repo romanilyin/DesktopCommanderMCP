@@ -4,7 +4,16 @@ import dns from 'node:dns/promises';
 import https from 'node:https';
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
-import { downloadChatFile } from '../../dist/utils/chat-file-download.js';
+import { downloadChatFile, withAbort } from '../../dist/utils/chat-file-download.js';
+
+test('an already expired deadline observes a later rejection from underlying native work', async () => {
+  let rejectWork;
+  const work = new Promise((_, reject) => { rejectWork = reject; });
+  await assert.rejects(withAbort(work, AbortSignal.abort()), { code: 'TRANSFER_TIMEOUT' });
+  rejectWork(new Error('late native error'));
+  // node:test fails on an unhandled rejection; give the event loop a full turn.
+  await new Promise(resolve => setImmediate(resolve));
+});
 
 const url = 'https://sdmntprdenmarkeast.oaiusercontent.com/test?sig=TEST_SECRET';
 const azureHosts = ['oaisdmntprdenmarkeast.blob.core.windows.net',
@@ -111,6 +120,7 @@ test(`redirect to a lookalike of ${host} is never requested`, async t => {
     headers: { location: `https://${host}.attacker.test/test` } }]);
   await assert.rejects(downloadChatFile(url, new AbortController().signal, 100, async () => {}), {
     code: 'SOURCE_NOT_ALLOWED', sourceHost: `${host}.attacker.test`,
+    diagnostics: { stage: 'redirect_validation', reason: 'HOST_NOT_ALLOWLISTED', redirect_count: 1 },
   });
   assert.equal(calls(), 1);
 });
@@ -118,7 +128,9 @@ test(`redirect to a lookalike of ${host} is never requested`, async t => {
 
 test('private DNS result is refused before any request', async t => {
   const calls = network(t, [], [{ address: '127.0.0.1', family: 4 }]);
-  await assert.rejects(downloadChatFile(url, new AbortController().signal, 10, async () => {}), /SOURCE_NOT_ALLOWED/);
+  await assert.rejects(downloadChatFile(url, new AbortController().signal, 10, async () => {}), {
+    code: 'SOURCE_NOT_ALLOWED', diagnostics: { stage: 'dns_lookup', reason: 'NON_PUBLIC_ADDRESS', redirect_count: 0 },
+  });
   assert.equal(calls(), 0);
 });
 
@@ -132,6 +144,7 @@ test('403 returns fixed unavailable code with no retry or secret-bearing excepti
   const calls = network(t, [{ status: 403 }]);
   await assert.rejects(downloadChatFile(url, new AbortController().signal, 10, async () => {}), error => {
     assert.equal(error.code, 'SOURCE_UNAVAILABLE');
+    assert.deepEqual(error.diagnostics, { stage: 'http_response', reason: 'HTTP_STATUS', http_status: 403, redirect_count: 0 });
     assert.equal(error.sourceHost, new URL(url).hostname);
     assert.equal(JSON.stringify(error).includes('TEST_SECRET'), false);
     return true;
@@ -148,10 +161,57 @@ test('unknown content length cannot exceed the streaming byte limit', async t =>
 
 test('abort after headers destroys a stalled body', async t => {
   const stream = new Readable({ read() {} });
+  stream.push(Buffer.from('abc'));
   network(t, [{ stream }]);
   const controller = new AbortController();
-  const operation = downloadChatFile(url, controller.signal, 10, async () => {});
-  const timer = setTimeout(() => controller.abort(), 30);
-  try { await assert.rejects(operation); assert.equal(stream.destroyed, true); }
-  finally { clearTimeout(timer); }
+  const progress = [];
+  const operation = downloadChatFile(url, controller.signal, 10, async () => {
+    // Abort only after bytes were received; no wall-clock race.
+    setImmediate(() => controller.abort());
+  }, update => progress.push(update));
+  await assert.rejects(operation, { code: 'TRANSFER_TIMEOUT', sourceHost: new URL(url).hostname,
+    diagnostics: { stage: 'response_body', reason: 'DEADLINE_EXCEEDED', redirect_count: 0, http_status: 200 } });
+  assert.equal(stream.destroyed, true);
+  assert.deepEqual(progress.at(-1), { stage: 'response_body', source_host: new URL(url).hostname, redirect_count: 0, bytes_received: 3 });
+  assert.equal(JSON.stringify(progress).includes('TEST_SECRET'), false);
+});
+
+test('URL policy errors name the failing rule, never the signed input, before any DNS request', async t => {
+  const lookup = t.mock.method(dns, 'lookup', () => { throw new Error('must not resolve'); });
+  const host = new URL(url).hostname;
+  for (const [source, reason] of [
+    ['TEST_SECRET not a URL', 'MALFORMED_URL'],
+    ['https://unrelated.blob.core.windows.net/TEST_SECRET', 'HOST_NOT_ALLOWLISTED'],
+    ['http://' + host + '/TEST_SECRET', 'HTTPS_REQUIRED'],
+    ['https://user:TEST_SECRET@' + host + '/x', 'URL_CREDENTIALS_FORBIDDEN'],
+    ['https://' + host + '/x#TEST_SECRET', 'URL_FRAGMENT_FORBIDDEN'],
+    ['https://' + host + ':444/TEST_SECRET', 'NONSTANDARD_HTTPS_PORT'],
+  ]) {
+    await assert.rejects(downloadChatFile(source, new AbortController().signal, 10, async () => {}), e => {
+      assert.equal(e.code, 'SOURCE_NOT_ALLOWED');
+      assert.deepEqual(e.diagnostics, { stage: 'source_url_validation', reason, redirect_count: 0 });
+      assert.equal(JSON.stringify(e).includes('TEST_SECRET'), false);
+      return true;
+    });
+  }
+  assert.equal(lookup.mock.callCount(), 0);
+});
+
+test('resolver errors do not disclose the underlying error or claim nonpublic DNS', async t => {
+  t.mock.method(dns, 'lookup', async () => { throw new Error('TEST_SECRET: raw resolver error'); });
+  const request = t.mock.method(https, 'get', () => { throw new Error('must not request'); });
+  await assert.rejects(downloadChatFile(url, new AbortController().signal, 10, async () => {}), e => {
+    assert.equal(e.code, 'TRANSFER_FAILED');
+    assert.deepEqual(e.diagnostics, { stage: 'dns_lookup', reason: 'DNS_LOOKUP_FAILED', redirect_count: 0 });
+    assert.equal(JSON.stringify(e).includes('TEST_SECRET'), false);
+    return true;
+  });
+  assert.equal(request.mock.callCount(), 0);
+});
+
+test('a disk write failure from the consumer is not relabeled as an HTTP read failure', async t => {
+  network(t, [{ chunks: [Buffer.from('abc')] }]);
+  const diskError = Object.assign(new Error('write failed'), { code: 'ENOSPC' });
+  await assert.rejects(downloadChatFile(url, new AbortController().signal, 10, async () => { throw diskError; }),
+    e => e === diskError);
 });
