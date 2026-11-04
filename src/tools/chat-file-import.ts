@@ -7,6 +7,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import sharp from 'sharp';
 import type { ServerResult } from '../types.js';
+import { configManager } from '../config-manager.js';
 import { BUILD_REVISION } from '../utils/build-revision.js';
 import { diagnostic, reply, resultSchema, type ChatTool, type FailureFacts, type Status } from './chat-file-result.js';
 import { fileProbeTool } from './chat-file-probe.js';
@@ -53,6 +54,7 @@ const count = z.number().int().nonnegative();
 const receiptSchema = z.object({
     transfer_id: idSchema, status: z.enum(['in_progress', 'prepared', 'saved', 'failed']),
     binding: z.string().regex(/^[0-9a-f]{64}$/), destination_path: z.string().min(1).max(4096),
+    source_route: z.enum(['public', 'openwrt_fakeip']).optional(),
     bytes: count.optional(), mime_type: z.enum(['image/png', 'image/jpeg', 'image/webp']).optional(),
     sha256: z.string().regex(/^[0-9a-f]{64}$/).optional(), code: diagnosticCode.optional(),
     reason: diagnosticCode.optional(), stage: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/).optional(),
@@ -175,8 +177,8 @@ export function createChatFileImporter(options: Options) {
                     reason: receipt.status === 'in_progress' ? 'INTERRUPTED_TRANSFER' : 'FILE_VERIFICATION_FAILED' },
                 { isError: tool === 'import_chat_file', destination_path: receipt.destination_path });
         }
-        const { transfer_id, destination_path, bytes, mime_type, sha256 } = receipt;
-        return reply(tool, { transfer_id, status: state, destination_path, bytes, mime_type, sha256 });
+        const { transfer_id, destination_path, bytes, mime_type, sha256, source_route } = receipt;
+        return reply(tool, { transfer_id, status: state, destination_path, bytes, mime_type, sha256, source_route });
     }
     async function get(args: unknown): Promise<ServerResult> {
         const tool = 'get_chat_file_transfer';
@@ -217,6 +219,7 @@ export function createChatFileImporter(options: Options) {
         let host: string | undefined;
         let redirectCount: number | undefined;
         let received: number | undefined;
+        let sourceRoute: Receipt['source_route'];
         let firstPersistAttempted = false;
         let atDeadline: { stage: string; bytes?: number; host?: string; redirects?: number } | undefined;
         const timer = setTimeout(() => {
@@ -275,6 +278,7 @@ export function createChatFileImporter(options: Options) {
                     stage = 'response_body';
                 }, progress => {
                     stage = progress.stage;
+                    if (progress.source_route) sourceRoute = progress.source_route;
                     host = safeHost(progress.source_host);
                     if (progress.redirect_count !== undefined) redirectCount = progress.redirect_count;
                     if (progress.bytes_received !== undefined) received = progress.bytes_received;
@@ -303,7 +307,7 @@ export function createChatFileImporter(options: Options) {
             if (!(format === 'png' ? ['.png'] : format === 'jpeg' ? ['.jpg', '.jpeg'] : ['.webp']).includes(extension)) {
                 throw new TransferError('IMAGE_EXTENSION_MISMATCH');
             }
-            receipt = { ...receipt, status: 'prepared', bytes, mime_type: format === 'png' ? 'image/png' : format === 'jpeg' ? 'image/jpeg' : 'image/webp', sha256: digest.digest('hex') };
+            receipt = { ...receipt, status: 'prepared', bytes, source_route: sourceRoute, mime_type: format === 'png' ? 'image/png' : format === 'jpeg' ? 'image/jpeg' : 'image/webp', sha256: digest.digest('hex') };
             stage = 'receipt_prepare';
             await persist(receipt);
             controller.signal.throwIfAborted();
@@ -364,6 +368,10 @@ function instance() {
     if (!importer) {
         importer = import('./filesystem.js').then(({ validatePath }) => createChatFileImporter({
             stateDirectory: path.join(os.homedir(), '.claude-server-commander', 'chat-file-transfers'), validatePath,
+            // Snapshot the operator's network setting once per download, including all redirects.
+            download: async (url, signal, limit, consume, progress) => downloadChatFile(url, signal, limit, consume, progress, {
+                allowOpenWrtFakeIp: (await configManager.getValue('chatFileOpenWrtFakeIp')) === true,
+            }),
         }));
     }
     return importer;

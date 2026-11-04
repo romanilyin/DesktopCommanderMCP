@@ -20,6 +20,7 @@ export const resultSchema = {
         tool: { type: 'string', enum: ['import_chat_file', 'get_chat_file_transfer'] },
         computer_name: string, build_revision: string, failure_build_revision: string, destination_path: string,
         bytes: integer, mime_type: string, sha256: string, code: string, stage: string, reason: string,
+        source_route: { type: 'string', enum: ['public', 'openwrt_fakeip'] },
         source_host: string, http_status: integer, redirect_count: integer, bytes_received: integer,
         elapsed_ms: integer, timeout_ms: integer, save_outcome: string, next_action: string, retry_policy: string,
     },

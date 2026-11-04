@@ -7,7 +7,7 @@ export type TransferDiagnostics = {
     stage?: string; reason?: string; http_status?: number; redirect_count?: number;
 };
 export type DownloadProgress = {
-    stage: string; source_host?: string; redirect_count?: number; bytes_received?: number;
+    stage: string; source_host?: string; redirect_count?: number; bytes_received?: number; source_route?: 'public' | 'openwrt_fakeip';
 };
 type Progress = (update: DownloadProgress) => void;
 
@@ -44,21 +44,33 @@ export function isPublicAddress(address: string): boolean {
     return version === 6 && globalV6.check(address, 'ipv6') && !blocked.check(address, 'ipv6');
 }
 
+export type DownloadPolicy = Readonly<{ allowOpenWrtFakeIp?: boolean }>;
+
+// Only these exact accounts are trusted; unrelated tenants share blob.core.windows.net.
+const azureSourceHosts = new Set([
+    'oaisdmntprdenmarkeast.blob.core.windows.net',
+    'oaisdmntprnortheu.blob.core.windows.net',
+    'oaisdmntprindiasocentral.blob.core.windows.net',
+    'oaisdmntprcentralus.blob.core.windows.net',
+    'oaisdmntprukwest.blob.core.windows.net',
+    'oaisdmntprpolandcentral.blob.core.windows.net',
+]);
+
+function isFakeIpSourceHost(hostname: string): boolean {
+    return azureSourceHosts.has(hostname) || /^sdmntpr[a-z0-9-]{0,56}\.oaiusercontent\.com$/.test(hostname);
+}
+
+function isOpenWrtFakeIp(address: string, family: number): boolean {
+    return family === 4 && isIP(address) === 4 &&
+        (address.startsWith('198.18.') || address.startsWith('198.19.'));
+}
+
 export function validateSourceUrl(value: string, stage = 'source_url_validation', redirect_count = 0): URL {
     let url: URL;
     try { url = new URL(value); }
     catch { throw new TransferError('SOURCE_NOT_ALLOWED', undefined, { stage, reason: 'MALFORMED_URL', redirect_count }); }
     const reject = (reason: string): never => { throw new TransferError('SOURCE_NOT_ALLOWED', url, { stage, reason, redirect_count }); };
-    // These hosts were observed in real file-param handoffs: Codex used the CDN,
-    // web ChatGPT used these exact Azure storage accounts. Do not allow all Azure
-    // tenants; unrelated accounts share blob.core.windows.net.
-    const allowedHost = url.hostname.endsWith('.oaiusercontent.com') ||
-        url.hostname === 'oaisdmntprdenmarkeast.blob.core.windows.net' ||
-        url.hostname === 'oaisdmntprnortheu.blob.core.windows.net' ||
-        url.hostname === 'oaisdmntprindiasocentral.blob.core.windows.net' ||
-        url.hostname === 'oaisdmntprcentralus.blob.core.windows.net' ||
-        url.hostname === 'oaisdmntprukwest.blob.core.windows.net' ||
-        url.hostname === 'oaisdmntprpolandcentral.blob.core.windows.net';
+    const allowedHost = url.hostname.endsWith('.oaiusercontent.com') || azureSourceHosts.has(url.hostname);
     if (url.protocol !== 'https:') reject('HTTPS_REQUIRED');
     if (url.username || url.password) reject('URL_CREDENTIALS_FORBIDDEN');
     if (url.hash) reject('URL_FRAGMENT_FORBIDDEN');
@@ -87,7 +99,7 @@ function stageError(code: string, reason: string, stage: string, url: URL, redir
         ...(http_status !== undefined && http_status >= 100 && http_status <= 599 ? { http_status } : {}) });
 }
 
-async function requestFile(url: URL, signal: AbortSignal, redirects: number, progress?: Progress): Promise<IncomingMessage> {
+async function requestFile(url: URL, signal: AbortSignal, redirects: number, allowOpenWrtFakeIp: boolean, progress?: Progress): Promise<IncomingMessage> {
     const source_host = safeHost(url);
     progress?.({ stage: 'dns_lookup', source_host, redirect_count: redirects });
     const timeout = (stage: string) => stageError('TRANSFER_TIMEOUT', 'DEADLINE_EXCEEDED', stage, url, redirects);
@@ -97,16 +109,20 @@ async function requestFile(url: URL, signal: AbortSignal, redirects: number, pro
         throw stageError('TRANSFER_FAILED', 'DNS_LOOKUP_FAILED', 'dns_lookup', url, redirects);
     });
     if (!addresses.length) throw stageError('SOURCE_NOT_ALLOWED', 'DNS_NO_ADDRESSES', 'dns_lookup', url, redirects);
-    if (addresses.some(({ address }) => !isPublicAddress(address))) {
+    // Check the whole answer set anew on each hop; reject mixed public/fake/private routes.
+    const trustedFakeRoute = allowOpenWrtFakeIp && isFakeIpSourceHost(url.hostname) &&
+        addresses.every(({ address, family }) => isOpenWrtFakeIp(address, family));
+    if (!trustedFakeRoute && !addresses.every(({ address, family }) => isIP(address) === family && isPublicAddress(address))) {
         throw stageError('SOURCE_NOT_ALLOWED', 'NON_PUBLIC_ADDRESS', 'dns_lookup', url, redirects);
     }
     const selected = addresses.find(a => a.family === 4) ?? addresses[0];
-    progress?.({ stage: 'http_request', source_host, redirect_count: redirects });
+    progress?.({ stage: 'http_request', source_host, redirect_count: redirects, source_route: trustedFakeRoute ? 'openwrt_fakeip' : 'public' });
     try {
         return await new Promise<IncomingMessage>((resolve, reject) => {
             // Pin the validated DNS answer while retaining the original TLS hostname.
             const request = https.get(url, {
                 agent: false, signal, family: selected.family,
+                ...(trustedFakeRoute ? { servername: url.hostname, rejectUnauthorized: true } : {}),
                 lookup: (_hostname, options, callback) => {
                     if (typeof options === 'object' && options.all) callback(null, [selected] as any);
                     else callback(null, selected.address, selected.family);
@@ -124,12 +140,12 @@ async function requestFile(url: URL, signal: AbortSignal, redirects: number, pro
 /** Consume the body under the same deadline as DNS, redirects and headers. */
 export async function downloadChatFile(
     source: string, signal: AbortSignal, maxBytes: number,
-    consume: (chunk: Buffer) => Promise<void>, progress?: Progress,
+    consume: (chunk: Buffer) => Promise<void>, progress?: Progress, policy?: DownloadPolicy,
 ): Promise<void> {
     progress?.({ stage: 'source_url_validation', redirect_count: 0 });
     let url = validateSourceUrl(source);
     for (let redirects = 0; redirects <= 3; redirects++) {
-        const response = await requestFile(url, signal, redirects, progress);
+        const response = await requestFile(url, signal, redirects, policy?.allowOpenWrtFakeIp === true, progress);
         const status = response.statusCode;
         const source_host = safeHost(url);
         progress?.({ stage: 'http_response', source_host, redirect_count: redirects });

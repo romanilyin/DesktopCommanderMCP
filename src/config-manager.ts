@@ -11,6 +11,7 @@ export interface ServerConfig {
   blockedCommands?: string[];
   defaultShell?: string;
   allowedDirectories?: string[];
+  chatFileOpenWrtFakeIp?: boolean;
   mcpUiPreviewsEnabled?: boolean; // False disables interactive cards; enabled by default.
   fileWriteLineLimit?: number; // Line limit for file write operations
   fileReadLineLimit?: number; // Default line limit for file read operations (changed from character-based)
@@ -209,6 +210,7 @@ class ConfigManager {
       })(),
       allowedDirectories: [],
       mcpUiPreviewsEnabled: true,
+      chatFileOpenWrtFakeIp: false,
       fileWriteLineLimit: 50,  // Default line limit for file write operations (changed from 100)
       fileReadLineLimit: 1000,  // Default line limit for file read operations (changed from character-based)
     };

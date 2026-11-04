@@ -28,6 +28,11 @@ export const CONFIG_FIELD_DEFINITIONS = {
     description: 'Show interactive file and configuration cards in compatible chats. Turn off to return ordinary tool results without HTML cards. Refresh the client tool list after changing this setting.',
     valueType: 'boolean',
   },
+  chatFileOpenWrtFakeIp: {
+    label: 'OpenWrt FakeIP for image imports',
+    description: 'Use this only on a network with a trusted FakeIP router. Permit 198.18.0.0/15 for recognized ChatGPT image hosts. HTTPS certificate and hostname checks still apply.',
+    valueType: 'boolean',
+  },
   fileReadLineLimit: {
     label: 'File Read Limit',
     description: 'Maximum number of lines returned from a file in one read action. Lower numbers keep responses short and safer; higher numbers return more text at once.',

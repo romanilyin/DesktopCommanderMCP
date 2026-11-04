@@ -217,6 +217,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - fileReadLineLimit (max lines for read_file, default 1000)
                         - fileWriteLineLimit (max lines per write_file call, default 50)
                         - mcpUiPreviewsEnabled (false disables interactive HTML cards; tool results remain available)
+                        - chatFileOpenWrtFakeIp (true permits the trusted 198.18.0.0/15 router pool for recognized image hosts)
                         - currentClient (information about the currently connected MCP client)
                         - clientHistory (history of all clients that have connected)
                         - version (version of SGG Local MCP)
@@ -244,6 +245,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - fileReadLineLimit (number, max lines for read_file)
                         - fileWriteLineLimit (number, max lines per write_file call)
                         - mcpUiPreviewsEnabled (boolean; false for results without interactive HTML cards)
+                        - chatFileOpenWrtFakeIp (boolean; enable only on a trusted FakeIP network for chat file downloads)
                         
                         IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access 
                         to the entire file system, regardless of the operating system.
